@@ -1,0 +1,396 @@
+---
+title: "Methylation Array analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE,warning=FALSE, cache=TRUE)
+```
+
+# Samples
+
+## Link to study:
+https://pmc.ncbi.nlm.nih.gov/articles/PMC9883157/
+
+Six patient-derived KMT2A-rearranged infant ALL cell lines (PER cell lines) in control versus treatment with different hypomethylating agents
+
+- Control: Ctrl
+- Azacitidine: Aza
+- Decitabine: Dec
+- Zebularine: Zeb
+
+# GEO acession number 
+
+GSE198679
+
+## Link to GEO page:
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE198679
+
+```{r, eval=F, echo=T}
+# Install necessary packages 
+
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("GEOquery")
+BiocManager::install("limma")
+BiocManager::install("minfi")
+BiocManager::install("RColorBrewer")
+BiocManager::install("missMethyl")
+BiocManager::install("minfiData")
+BiocManager::install("Gviz")
+BiocManager::install("DMRcate")
+BiocManager::install("DMRcatedata")
+BiocManager::install("tidyverse")
+BiocManager::install("mCSEA")
+```
+
+```{r, eval=T, echo=T}
+# Load packages
+
+library("GEOquery")
+library("limma")
+library("minfi")
+library("RColorBrewer")
+library("missMethyl") 
+library("minfiData")
+library("Gviz")
+library("DMRcate")
+library("DMRcatedata")
+library("mCSEA")
+```
+
+```{r, eval=F, echo=T}
+# Download and save GEO Supplementary data (IDATs)
+
+# get raw data
+
+options(timeout = 600)
+
+GSE_Supp <- getGEOSuppFiles("GSE198679")
+
+# decompress IDATs
+
+untar("GSE198679/GSE198679_RAW.tar", exdir = "GSE198679/IDATs")
+
+# list files
+
+head(list.files("GSE198679/IDATs", pattern = "idat"))
+
+IDAT_Files <- list.files("GSE198679/IDATs", pattern = "idat.gz$", full = TRUE)
+
+# decompress individual IDATfiles
+
+sapply(IDAT_Files, gunzip, overwrite = TRUE)
+
+# read IDATs and create RGSet
+
+RGSet <- read.metharray.exp("GSE198679/IDATs")
+```
+
+```{r, eval=T, echo=F}
+# Load RGSet
+
+RGSet <- readRDS("/home/gbl/RGSet_GSE198679.rds")
+```
+
+```{r, eval=T, echo=T}
+# Overview of RGSet data
+
+RGSet
+
+getManifest(RGSet)
+
+sampleNames(RGSet)
+
+# Change sample names 
+
+sampleNames(RGSet) <- c("Ctrl_01", "Ctrl_02", "Ctrl_03", "Ctrl_04", "Ctrl_05", "Ctrl_06",
+                        "Aza_01", "Aza_02", "Aza_03", "Aza_04", "Aza_05", "Aza_06",
+                        "Dec_01", "Dec_02", "Dec_03", "Dec_04", "Dec_05", "Dec_06",
+                        "Zeb_01", "Zeb_02", "Zeb_03", "Zeb_04", "Zeb_05", "Zeb_06")
+```
+
+```{r, eval=T, echo=T}
+# Transform raw red/green intensity data into MethylSet
+# MethylSet: object containing methylated and unmethylated signals
+
+MSet <- preprocessRaw(RGSet)
+
+MSet
+```
+
+```{r, eval=T, echo=T}
+# Map MethylSet to RatioSet
+# RatioSet: object storing Beta and/or M-values, and copy number matrix (CN)
+
+RatioSet <- ratioConvert(MSet, what = "both", keepCN = TRUE)
+
+RatioSet
+```
+
+```{r, eval=T, echo=T}
+# Create a Genomic RatioSet by adding genomic coordinates to each probe
+
+GenomicRatioSet <- mapToGenome(RatioSet)
+
+GenomicRatioSet
+```
+
+```{r, eval=T, echo=T}
+# Explore Beta value, M value and Copy Number matrices from GenomicRatioSet object
+
+beta <- getBeta(GenomicRatioSet)
+head(beta)
+
+mValue <- getM(GenomicRatioSet)
+head(mValue)
+
+CN <- getCN(GenomicRatioSet)
+head(CN)
+```
+
+```{r, eval=T, echo=T}
+# Quality control
+
+# simple log median intensity quality control plot
+
+qc <- getQC(MSet)
+plotQC(qc)
+
+# plotting the mean detection p-value for each sample 
+
+detP <- detectionP(RGSet)
+head(detP)
+
+barplot(colMeans(detP), las=2, cex.names=0.8, ylab="Mean detection p-values")
+
+# plotting the overall density distribution of Beta values for each sample
+
+pheno_Data <- pData(MSet)
+densityPlot(MSet, sampGroups = pheno_Data@rownames)
+
+# control probe signal plot
+
+controlStripPlot(RGSet, controls = "BISULFITE CONVERSION I")
+```
+
+```{r, eval=F, echo=T}
+# Normalization
+# preprocessQuantile used as it is aimed for datasets containing same cell lines with global methylation similarities (as per the authors)
+# it is also advised to try and compare different normalization methods
+
+GenomicRatioSet_norm <- preprocessQuantile(RGSet)
+```
+```{r, eval=T, echo=F}
+
+GenomicRatioSet_norm <- readRDS("/home/gbl/GenomicRatioSet_norm.rds")
+```
+
+```{r, eval=T, echo=T}
+# Comparison between Raw and Normalized
+
+par(mfrow=c(1,2))
+densityPlot(RGSet, sampGroups=pheno_Data@rownames,main="Raw", legend=FALSE)
+densityPlot(getBeta(GenomicRatioSet_norm), sampGroups=pheno_Data@rownames,
+            main="Normalized", legend=FALSE)
+```
+
+```{r, eval=T, echo=T}
+# Create a Multi-Dimensional Scaling plot in order to check the variation in data (PCA)
+
+pal <-  brewer.pal(8, "Dark2")
+
+plotMDS(getM(GenomicRatioSet_norm), top=1000, gene.selection="common",
+        col=pal[factor(pheno_Data@rownames)], dim=c(1,2))
+```
+
+```{r, eval=T, echo=T}
+# Filter out poor performing probes
+
+# same order for probes in the GenomicRatioSet_norm and detP objects
+
+detP <- detectionP(RGSet)
+detP <- detP[match(featureNames(GenomicRatioSet_norm),rownames(detP)),]
+
+# remove probes that have failed in at least one sample 
+# check if the number of values < 0.01 is equal to the number of samples
+
+keep <- rowSums(detP < 0.01) == ncol(GenomicRatioSet_norm)
+table(keep)
+
+# Subset the GenomicRatioSet
+
+GenomicRatioSet_norm_filt <- GenomicRatioSet_norm[keep,]
+GenomicRatioSet_norm_filt
+```
+
+```{r, eval=T, echo=T}
+# Filter out SNPs that may affect CpGs
+
+GenomicRatioSet_norm_filt <- dropLociWithSnps(GenomicRatioSet_norm_filt)
+GenomicRatioSet_norm_filt
+```
+
+```{r, eval=T, echo=T}
+# Differentially Methylated CpGs analysis
+
+# Calculate M-values for the normalized and filtered data
+
+mVals <- getM(GenomicRatioSet_norm_filt)
+
+# Set up the design matrix 
+
+design <- model.matrix(~0+factor(c(rep("1", 6), rep("2", 6), rep("3", 6), rep("4", 6))))
+colnames(design) <- c("Ctrl", "Aza", "Dec", "Zeb")
+
+fit <- lmFit(mVals, design)
+
+# Create a contrast matrix for specific comparisons
+
+contMatrix <- makeContrasts(Aza-Ctrl, Dec-Ctrl, Zeb-Ctrl, Dec-Aza, Zeb-Aza, Zeb-Dec, levels=design)
+
+# Fit the contrasts
+
+fit2 <- contrasts.fit(fit, contMatrix)
+
+# Rank genes
+
+fit2 <- eBayes(fit2)
+```
+
+```{r, eval=T, echo=T}
+# Add genelist information - annotation in relation to CpG position and gene group
+
+annoEPIC <- getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+
+annoEPIC_Subset <- annoEPIC[match(rownames(mVals), annoEPIC$Name),  
+                            c(1:4,19,22:24,31)]
+
+# Table of results
+
+Aza_Ctrl <- topTable(fit2, num=Inf, coef=1, genelist=annoEPIC_Subset)
+
+head(Aza_Ctrl)
+
+# Plot differentially methylated sites from the comparisons, using Beta values
+
+bVals <- getBeta(GenomicRatioSet_norm_filt)
+
+par(mfrow=c(2,2))
+cpgs <- c("cg27630540", "cg03061237", "cg10505163", "cg19172487")
+pgroup <- pheno_Data@rownames
+pgroup <- factor(pgroup, levels=pgroup)
+plotCpg(bVals, cpg=cpgs, pheno=pgroup, ylab="Beta values")
+```
+
+```{r, eval=T, echo=T}
+# Differentially Methylated Regions analysis
+
+Aza_Ctrl_anno <- cpg.annotate(object = mVals, datatype = "array", what = "M", 
+                        analysis.type = "differential", design = design,
+                        contrasts = TRUE, cont.matrix = contMatrix, 
+                        coef = "Aza - Ctrl", arraytype = "EPIC")
+
+Aza_Ctrl_anno
+
+DMRs_Aza_Ctrl <- dmrcate(Aza_Ctrl_anno, lambda = 1000, C = 2)
+
+DMRs_Aza_Ctrl
+
+# Create GRanges object
+
+results_gr_Aza_Ctrl <- extractRanges(DMRs_Aza_Ctrl)
+
+results_gr_Aza_Ctrl
+
+results_gr_Aza_Ctrl <- extractRanges(DMRs_Aza_Ctrl)
+
+results_gr_Aza_Ctrl
+```
+
+```{r, eval=T, echo=T}
+# Plot results for specific DMR
+
+pal <- brewer.pal(8,"Dark2")
+
+DMR.plot(ranges = results_gr_Aza_Ctrl,
+         dmr = 200,
+         CpGs = GenomicRatioSet_norm_filt,
+         phen.col = pgroup,
+         genome = "hg19")
+```
+
+```{r, eval=T, echo=T, results='hide'}
+# Define Functional Regions in order to detect DMRs
+
+# Create a vector containing the rank metric (logFC)
+
+Rank_logFC <- Aza_Ctrl$logFC
+names(Rank_logFC) <- rownames(Aza_Ctrl)
+
+pheno <- as.data.frame(pgroup)
+rownames(pheno) <- pheno[,1]
+
+results_Aza_Ctrl <- mCSEATest(Rank_logFC,
+                       bVals,
+                       pheno,
+                       regionsTypes = "promoters",
+                       platform = "EPIC")
+```
+```{r, eval=T, echo=T}
+head(results_Aza_Ctrl$promoters)
+```
+
+```{r, eval=T, echo=T, results='hide'}
+# Plot results for specific promoter region
+
+mCSEAPlot(results_Aza_Ctrl, regionType = "promoters", 
+          dmrName = "NFATC1", transcriptAnnotation = "symbol", 
+          col = rep(c("black", "purple", "red", "green", "blue", "grey"),4), 
+          makePDF = FALSE)
+```
+
+```{r, eval=T, echo=T}
+# Gene Ontology analysis
+
+# Get the significant CpG sites at less than 5% FDR
+
+sigCpGs_Aza_Ctrl <- Aza_Ctrl$Name[Aza_Ctrl$adj.P.Val<0.05] 
+
+# First 10 significant CpGs
+
+sigCpGs_Aza_Ctrl[1:10]
+
+# Total number of significant CpGs at 5% FDR
+
+length(sigCpGs_Aza_Ctrl)
+
+# Get all the CpG sites used in the analysis to form the background
+
+all_Aza_Ctrl <- Aza_Ctrl$Name
+
+# Total number of CpG sites tested
+
+length(all_Aza_Ctrl)
+```
+
+```{r, eval=T, echo=T}
+# Run enrichment analysis
+
+# GO
+
+GO_Aza_Ctrl <- gometh(sig.cpg = sigCpGs_Aza_Ctrl, all = all_Aza_Ctrl, collection = "GO")
+
+topGSA(GO_Aza_Ctrl)
+
+# KEGG
+
+KEGG_Aza_Ctrl <- gometh(sig.cpg = sigCpGs_Aza_Ctrl, all = all_Aza_Ctrl, collection = "KEGG")
+
+topGSA(KEGG_Aza_Ctrl)
+```
+
+```{r, eval=T, echo=T}
+sessionInfo()
+```
