@@ -1,0 +1,2315 @@
+---
+title: "Methylation and Correlation analyses in R"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    collapsed: false
+    number_sections: false
+    toc_depth: 1
+    #code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE,warning=FALSE, cache=TRUE)
+```
+
+
+# Samples nomenclature
+
+The samples used here correspond to distinct stages in cancer progression.
+They are named in a linear manner, as follows:
+
+- S01, S02, S03 and S04: used in Transcriptome analysis (RNA-Seq) and Methylome analysis (Enhanced 
+Reduced Representation Bisulfite Sequencing - ERRBS)
+- S04, S05, S06 and S07: used in paired Hydroxymethylome and Methylome analysis (Oxidative Bisulfite,
+followed by Enhanced Reduced Representation Bisulfite Sequencing - oxRRBS/ERRBS)
+
+- Replicates were named A or B in the Methylome analysis and 1, 2 or 3 in the Transcriptome analysis
+- Samples undergoing oxidation step followed by bisulfite treatment were named oxBS
+- Samples undergoing bisulfite treatment were named BS
+
+
+
+# Pre-processing 
+
+
+
+```{r, eval=F, echo=T}
+# Install package methylKit
+if (!require("BiocManager", quietly = TRUE))
+install.packages("BiocManager")
+
+BiocManager::install("methylKit")
+```
+
+
+```{r,eval=T,echo=T}
+# Load package 
+
+library("methylKit")
+```
+
+
+```{r eval=T, echo=T}
+# Create 4 lists containing the CpG methylcall data
+# Samples: S04_{A-B}_{BS-oxBS} / S05_{A-B}_{BS-oxBS} / S06_{A-B}_{BS-oxBS} / S07_{A-B}_{BS-oxBS}
+
+file.list.S04 <- list(system.file("extdata", "methylcall.CpG.S04_A_BS.1x.txt", package="methylKit"), 
+                      system.file("extdata", "methylcall.CpG.S04_B_BS.1x.txt", package="methylKit"),
+                      system.file("extdata", "methylcall.CpG.S04_A_oxBS.1x.txt", package="methylKit"),
+                      system.file("extdata", "methylcall.CpG.S04_B_oxBS.1x.txt", package="methylKit"))
+file.list.S05 <- list(system.file("extdata", "methylcall.CpG.S05_A_BS.1x.txt", package="methylKit"), 
+                      system.file("extdata", "methylcall.CpG.S05_B_BS.1x.txt", package="methylKit"),
+                      system.file("extdata", "methylcall.CpG.S05_A_oxBS.1x.txt", package="methylKit"),
+                      system.file("extdata", "methylcall.CpG.S05_B_oxBS.1x.txt", package="methylKit")) 
+file.list.S06 <- list(system.file("extdata", "methylcall.CpG.S06_A_BS.1x.txt", package="methylKit"), 
+                      system.file("extdata", "methylcall.CpG.S06_B_BS.1x.txt", package="methylKit"),
+                      system.file("extdata", "methylcall.CpG.S06_A_oxBS.1x.txt", package="methylKit"),
+                      system.file("extdata", "methylcall.CpG.S06_B_oxBS.1x.txt", package="methylKit"))
+file.list.S07 <- list(system.file("extdata", "methylcall.CpG.S07_A_BS.1x.txt", package="methylKit"), 
+                      system.file("extdata", "methylcall.CpG.S07_B_BS.1x.txt", package="methylKit"),
+                      system.file("extdata", "methylcall.CpG.S07_A_oxBS.1x.txt", package="methylKit"),
+                      system.file("extdata", "methylcall.CpG.S07_B_oxBS.1x.txt", package="methylKit"))
+```
+
+
+```{r, eval=T, echo=F}
+reads_S04 <- methRead(file.list.S04, sample.id=list("S04_A_BS", "S04_B_BS", "S04_A_oxBS", 
+                      "S04_B_oxBS"), assembly= "mm10", treatment=c(0,0,1,1), context="CpG")
+```
+```{r, eval=F, echo=T}
+# Create methylRawlist objects 
+
+reads_S04 <- methRead(file.list.S04, sample.id=list("S04_A_BS", "S04_B_BS", "S04_A_oxBS", 
+                      "S04_B_oxBS"), assembly= "mm10", treatment=c(0,0,1,1), context="CpG")
+reads_S05 <- methRead(file.list.S05, sample.id=list("S05_A_BS", "S05_B_BS", "S05_A_oxBS", 
+                      "S05_B_oxBS"), assembly= "mm10", treatment=c(0,0,1,1), context="CpG")
+reads_S06 <- methRead(file.list.S06, sample.id=list("S06_A_BS", "S06_B_BS", "S06_A_oxBS", 
+                      "S06_B_oxBS"), assembly= "mm10", treatment=c(0,0,1,1), context="CpG")
+reads_S07 <- methRead(file.list.S07, sample.id=list("S07_A_BS", "S07_B_BS", "S07_A_oxBS", 
+                      "S07_B_oxBS"), assembly= "mm10", treatment=c(0,0,1,1), context="CpG")
+
+head(reads_S04)
+```
+```{r, eval=T, echo=F}
+head(reads_S04)
+```
+
+
+```{r, eval=F, echo=T}
+# Filter by coverage 
+# discard < 10x coverage and bases with more than 99.9 percentile of coverage in each sample
+
+filtered_S04 <- filterByCoverage(reads_S04, lo.count = 10, lo.perc = NULL, 
+                                 hi.count = NULL, hi.perc = 99.99)
+filtered_S05 <- filterByCoverage(reads_S05, lo.count = 10, lo.perc = NULL, 
+                                 hi.count = NULL, hi.perc = 99.99)
+filtered_S06 <- filterByCoverage(reads_S06, lo.count = 10, lo.perc = NULL, 
+                                 hi.count = NULL, hi.perc = 99.99)
+filtered_S07 <- filterByCoverage(reads_S07, lo.count = 10, lo.perc = NULL, 
+                                 hi.count = NULL, hi.perc = 99.99)
+```
+
+
+```{r, eval=F, echo=T}
+# Normalize coverage by median 
+
+norm_S04 <- normalizeCoverage(filtered_S04, method="median")
+norm_S05 <- normalizeCoverage(filtered_S05, method="median")
+norm_S06 <- normalizeCoverage(filtered_S06, method="median")
+norm_S07 <- normalizeCoverage(filtered_S07, method="median")
+```
+
+
+```{r, eval=F, echo=T}
+# Unite the samples into a single object for comparison between reads 
+
+united_S04 <- unite(norm_S04, destrand=FALSE)
+united_S05 <- unite(norm_S05, destrand=FALSE)
+united_S06 <- unite(norm_S06, destrand=FALSE)
+united_S07 <- unite(norm_S07, destrand=FALSE)
+```
+
+
+```{r, eval=F, echo=T}
+# Pool groups and sum coverage / numCs / numTs into a single representative sample 
+
+pooled_S04 <- pool(united_S04,sample.ids=c("S04_BS","S04_oxBS"))
+pooled_S05 <- pool(united_S05,sample.ids=c("S05_BS","S05_oxBS"))
+pooled_S06 <- pool(united_S06,sample.ids=c("S06_BS","S06_oxBS"))
+pooled_S07 <- pool(united_S07,sample.ids=c("S07_BS","S07_oxBS"))
+```
+
+
+```{r, eval=F, echo=T}
+# Calculate differential methylation to test for CGIs containing 5mC / 5hmC levels above the bisulfite conversion error 
+# Binomial test with Benjamini-Hochberg corrected p-value followed by Fisher test in order to check                                           differences between BS and oxBS datasets
+
+# ** NOTE: MEMORY CONSUMING - IF NECESSARY, RUN ONE OBJECT AT A TIME **
+
+diff_Meth_S04 <- calculateDiffMeth(pooled_S04,covariates=NULL, overdispersion=c("MN"), adjust=c("BH"),
+                                   test=c("F"), slim=FALSE, mc.cores=10)
+diff_Meth_S05 <- calculateDiffMeth(pooled_S05,covariates=NULL, overdispersion=c("MN"), adjust=c("BH"),
+                                   test=c("F"), slim=FALSE, mc.cores=10)
+diff_Meth_S06 <- calculateDiffMeth(pooled_S06,covariates=NULL, overdispersion=c("MN"), adjust=c("BH"),
+                                   test=c("F"), slim=FALSE, mc.cores=10)
+diff_Meth_S07 <- calculateDiffMeth(pooled_S07,covariates=NULL, overdispersion=c("MN"), adjust=c("BH"),
+                                   test=c("F"), slim=FALSE, mc.cores=10)
+```
+
+
+```{r, eval=F, echo=T}
+# Create an exclusion list for each cell line 
+# Criteria for exclusion: qvalue <= 0.05 
+# 5mC / 5hmC levels significantly above the bisulfite conversion error
+
+sig_exclusion_list_S04 <- diff_Meth_S04[diff_Meth_S04$qvalue<=0.05,]
+sig_exclusion_list_S05 <- diff_Meth_S05[diff_Meth_S05$qvalue<=0.05,]
+sig_exclusion_list_S06 <- diff_Meth_S06[diff_Meth_S06$qvalue<=0.05,]
+sig_exclusion_list_S07 <- diff_Meth_S07[diff_Meth_S07$qvalue<=0.05,]
+
+# create an unique exclusion list of all exclusion sites
+
+sig_exclusion_list <- rbind(sig_exclusion_list_S04, sig_exclusion_list_S05,
+                            sig_exclusion_list_S06, sig_exclusion_list_S07)
+sig_exclusion_list_unique <- sig_exclusion_list[!duplicated(sig_exclusion_list$start),]
+
+# save unique exclusion list
+
+saveRDS(sig_exclusion_list_unique, "sig_exclusion_list_unique.rds")
+head(sig_exclusion_list_unique)
+```
+
+
+```{r, eval=T, echo=F}
+exc <- readRDS("/home/gbl/sig_exclusion_list_unique.rds")
+head(exc)
+```
+
+
+
+# Methylation / Hydroxymethylation analysis
+
+
+
+```{r, eval=F, echo=T}
+# Install necessary packages
+
+if (!require("BiocManager", quietly = TRUE))
+install.packages("BiocManager")
+
+BiocManager::install("methylKit")
+BiocManager::install("genomation")
+BiocManager::install("TxDb.Mmusculus.UCSC.mm10.ensGene")
+install.packages("mixtools")
+install_github("ShengLi/edmr")
+BiocManager::install("annotatr")
+BiocManager::install("TxDb.Mmusculus.UCSC.mm10.knownGene")
+BiocManager::install("org.Mm.eg.db")
+BiocManager::install("regioneR")
+```
+
+
+```{r, eval=F, echo=T}
+# Load packages 
+
+library("methylKit")
+library("genomation")
+library("TxDb.Mmusculus.UCSC.mm10.ensGene")
+library("edmr")
+library("mixtools")
+library("GenomicRanges")
+library("IRanges")
+library("rtracklayer")
+library("annotatr")
+library("regioneR")
+library("TxDb.Mmusculus.UCSC.mm10.knownGene")
+library("org.Mm.eg.db")
+```
+
+
+```{r, eval=F, echo=T}
+# Create 2 file.lists of BS and oxBS methylcall data 
+
+BS.file.list <- list(system.file("extdata", "methylcall.CpG.S04_A_BS.1x.txt",  package="methylKit"),
+                     system.file("extdata", "methylcall.CpG.S04_B_BS.1x.txt",  package="methylKit"),
+                     system.file("extdata", "methylcall.CpG.S05_A_BS.1x.txt",  package="methylKit"),
+                     system.file("extdata", "methylcall.CpG.S05_B_BS.1x.txt",  package="methylKit"),
+                     system.file("extdata", "methylcall.CpG.S06_A_BS.1x.txt",  package="methylKit"),
+                     system.file("extdata", "methylcall.CpG.S06_B_BS.1x.txt",  package="methylKit"),
+                     system.file("extdata", "methylcall.CpG.S07_A_BS.1x.txt",  package="methylKit"),
+                     system.file("extdata", "methylcall.CpG.S07_B_BS.1x.txt",  package="methylKit"))
+oxBS.file.list <- list(system.file("extdata", "methylcall.CpG.S04_A_oxBS.1x.txt", package="methylKit"),
+                       system.file("extdata", "methylcall.CpG.S04_B_oxBS.1x.txt", package="methylKit"),
+                       system.file("extdata", "methylcall.CpG.S05_A_oxBS.1x.txt", package="methylKit"),
+                       system.file("extdata", "methylcall.CpG.S05_B_oxBS.1x.txt", package="methylKit"),
+                       system.file("extdata", "methylcall.CpG.S06_A_oxBS.1x.txt", package="methylKit"),
+                       system.file("extdata", "methylcall.CpG.S06_B_oxBS.1x.txt", package="methylKit"),
+                       system.file("extdata", "methylcall.CpG.S07_A_oxBS.1x.txt", package="methylKit"),
+                       system.file("extdata", "methylcall.CpG.S07_B_oxBS.1x.txt", package="methylKit"))
+```
+
+
+```{r, eval=F, echo=T}
+# Create 2 methylRawlist objects from BS and oxBS datasets
+
+BS_reads <- methRead(BS.file.list, sample.id=list ("S04_A","S04_B","S05_A","S05_B","S06_A","S06_B",
+                       "S07_A","S07_B"), assembly="mm10", treatment=c(0,0,1,1,2,2,3,3), context="CpG")
+oxBS_reads <- methRead(oxBS.file.list, sample.id=list ("S04_A","S04_B","S05_A","S05_B","S06_A","S06_B", 
+                       "S07_A","S07_B"), assembly="mm10", treatment=c(0,0,1,1,2,2,3,3), context="CpG")
+```
+
+
+```{r, eval=F, echo=T}
+# Get true 5mC / 5hmC reads from simple subtraction
+# true 5mC = oxBS dataset
+# true 5hmC = (BS dataset - oxBs dataset)
+
+true_5mC <- oxBS_reads
+true_5hmC <- adjustMethylC(BS_reads,true_5mC)
+```
+
+
+```{r, eval=F, echo=T}
+# Filter by coverage (5mC and 5hmC)
+# discard < 10x coverage and bases with more than 99.9 percentile of coverage in each sample
+
+filtered_5mC <- filterByCoverage(true_5mC, lo.count=10, lo.perc=NULL, hi.count=NULL, hi.perc=99.99)
+filtered_5hmC <- filterByCoverage(true_5hmC, lo.count=10, lo.perc=NULL, hi.count=NULL, hi.perc=99.99)
+```
+
+
+```{r, eval=F, echo=T}
+# Normalize coverage by median (5mC and 5hmC)
+
+norm_5mC <- normalizeCoverage(filtered_5mC, method="median")
+norm_5hmC <- normalizeCoverage(filtered_5hmC, method="median")
+```
+
+
+```{r, eval=F, echo=T}
+# Unite the samples into a single object for comparison between reads (5mC and 5hmC)
+
+united_5mC <- unite(norm_5mC, destrand=FALSE)
+united_5hmC <- unite(norm_5hmC, destrand=FALSE)
+```
+
+
+```{r, eval=F, echo=T}
+# Create a subset of 5mC and 5hmC 
+# subset = reads - exclusion list sites from pre-processing step
+
+sig_exclusion_list_unique=readRDS("sig_exclusion_list_unique.rds")
+excl.gr <- makeGRangesFromDataFrame(sig_exclusion_list_unique, seqnames.field= c("chr"),
+                                    start.field=c("start"), end.field=c("end"))
+
+sub_5mC <- united_5mC[! as(united_5mC, "GRanges") %over% excl.gr,]
+sub_5hmC <- united_5hmC[! as(united_5hmC, "GRanges") %over% excl.gr,]
+
+head(sub_5hmC)
+```
+```{r, eval=T, echo=F}
+sub_5mC <- readRDS("/home/gbl/sub_5hmC.rds")
+
+sub_5mC@sample.ids <- c("S04_A", "S04_B", "S05_A", "S05_B", "S06_A", "S06_B", "S07_A", "S07_B")
+
+head(sub_5mC)
+```
+
+
+```{r, eval=F, echo=T}
+# Perform PCA analysis
+
+# cluster samples (5mC and 5hmC)
+
+clusterSamples(sub_5mC, dist = "canberra", method = "ward", plot = TRUE)
+clusterSamples(sub_5hmC, dist = "canberra", method = "ward", plot = TRUE)
+
+# PCA analysis
+
+PCASamples(sub_5mC, screeplot = FALSE)
+PCASamples(sub_5hmC, screeplot = FALSE)
+```
+
+
+```{r, eval=T, echo=T}
+
+clusterSamples(sub_5mC, dist = "canberra", method = "ward", plot = TRUE)
+
+```
+
+
+```{r, eval=F, echo=T}
+# Pool groups and sum coverage / numCs / numTs into a single representative sample 
+
+pooled_5mC <- pool(sub_5mC,sample.ids=c("S04", "S05", "S06", "S07"))
+pooled_5hmC <- pool(sub_5hmC,sample.ids=c("S04", "S05", "S06", "S07"))
+```
+
+
+```{r, eval=F, echo=T}
+# Reorganize samples for diffMeth test and comparisons
+
+# S04 vs All (5mC)
+
+S04_vs_S05_5mC <- reorganize(pooled_5mC, sample.ids = c("S04", "S05"), treatment = c(0,1))
+S04_vs_S06_5mC <- reorganize(pooled_5mC, sample.ids = c("S04", "S06"), treatment = c(0,2))
+S04_vs_S07_5mC <- reorganize(pooled_5mC, sample.ids = c("S04", "S07"), treatment = c(0,3))
+
+# S05 vs All (5mC)
+
+S05_vs_S06_5mC <- reorganize(pooled_5mC, sample.ids = c("S05", "S06"), treatment = c(1,2))
+S05_vs_S07_5mC <- reorganize(pooled_5mC, sample.ids = c("S05", "S07"), treatment = c(1,3))
+
+# S06 vs S07 (5mC)
+
+S06_vs_S07_5mC <- reorganize(pooled_5mC, sample.ids = c("S06", "S07"), treatment = c(2,3))
+
+# S04 vs All (5hmC)
+
+S04_vs_S05_5hmC <- reorganize(pooled_5hmC, sample.ids = c("S04", "S05"), treatment = c(0,1))
+S04_vs_S06_5hmC <- reorganize(pooled_5hmC, sample.ids = c("S04", "S06"), treatment = c(0,2))
+S04_vs_S07_5hmC <- reorganize(pooled_5hmC, sample.ids = c("S04", "S07"), treatment = c(0,3))
+
+# S05 vs All (5hmC)
+
+S05_vs_S06_5hmC <- reorganize(pooled_5hmC, sample.ids = c("S05", "S06"), treatment = c(1,2))
+S05_vs_S07_5hmC <- reorganize(pooled_5hmC, sample.ids = c("S05", "S07"), treatment = c(1,3))
+
+# S06 vs S07 (5hmC)
+
+S06_vs_S07_5hmC <- reorganize(pooled_5hmC, sample.ids = c("S06", "S07"), treatment = c(2,3))
+```
+
+
+```{r, eval=F, echo=T}
+# Calculate differential methylation on cell lines
+
+# ** NOTE: MEMORY CONSUMING - RUN ONE OBJECT AT A TIME **
+
+# 5mC
+
+diff_Meth_S04_vs_S05_5mC <- calculateDiffMeth(S04_vs_S05_5mC, overdispersion = c("MN"), mc.cores = 10)
+diff_Meth_S04_vs_S06_5mC <- calculateDiffMeth(S04_vs_S06_5mC, overdispersion = c("MN"), mc.cores = 10) 
+diff_Meth_S04_vs_S07_5mC <- calculateDiffMeth(S04_vs_S07_5mC, overdispersion = c("MN"), mc.cores = 10)
+diff_Meth_S05_vs_S06_5mC <- calculateDiffMeth(S05_vs_S06_5mC, overdispersion = c("MN"), mc.cores = 10)
+diff_Meth_S05_vs_S07_5mC <- calculateDiffMeth(S05_vs_S07_5mC, overdispersion = c("MN"), mc.cores = 10)
+diff_Meth_S06_vs_S07_5mC <- calculateDiffMeth(S06_vs_S07_5mC, overdispersion = c("MN"), mc.cores = 10)
+
+# 5hmC
+
+diff_Meth_S04_vs_S05_5hmC <- calculateDiffMeth(S04_vs_S05_5hmC, overdispersion=c("MN"), mc.cores=10)
+diff_Meth_S04_vs_S06_5hmC <- calculateDiffMeth(S04_vs_S06_5hmC, overdispersion=c("MN"), mc.cores=10)
+diff_Meth_S04_vs_S07_5hmC <- calculateDiffMeth(S04_vs_S07_5hmC, overdispersion=c("MN"), mc.cores=10)
+diff_Meth_S05_vs_S06_5hmC <- calculateDiffMeth(S05_vs_S06_5hmC, overdispersion=c("MN"), mc.cores=10)
+diff_Meth_S05_vs_S07_5hmC <- calculateDiffMeth(S05_vs_S07_5hmC, overdispersion=c("MN"), mc.cores=10)
+diff_Meth_S06_vs_S07_5hmC <- calculateDiffMeth(S06_vs_S07_5hmC, overdispersion=c("MN"), mc.cores=10)
+```
+
+
+```{r, eval=F, echo=T}
+# Get differentially methylated bases/regions with specific cuttofs
+
+# all_diff 5mC and 5hmC
+
+# 20% cuttof difference for 5mC
+
+all_diff_S04_vs_S05_5mC<-getMethylDiff(diff_Meth_S04_vs_S05_5mC,difference=20,qvalue=0.01,type="all")
+all_diff_S04_vs_S06_5mC<-getMethylDiff(diff_Meth_S04_vs_S06_5mC,difference=20,qvalue=0.01,type="all")
+all_diff_S04_vs_S07_5mC<-getMethylDiff(diff_Meth_S04_vs_S07_5mC,difference=20,qvalue=0.01,type="all")
+all_diff_S05_vs_S06_5mC<-getMethylDiff(diff_Meth_S05_vs_S06_5mC,difference=20,qvalue=0.01,type="all")
+all_diff_S05_vs_S07_5mC<-getMethylDiff(diff_Meth_S05_vs_S07_5mC,difference=20,qvalue=0.01,type="all")
+all_diff_S06_vs_S07_5mC<-getMethylDiff(diff_Meth_S06_vs_S07_5mC,difference=20,qvalue=0.01,type="all")
+
+# 1% cuttof difference for 5hmC
+
+all_diff_S04_vs_S05_5hmC<-getMethylDiff(diff_Meth_S04_vs_S05_5hmC,difference=1,qvalue=0.01,type="all")
+all_diff_S04_vs_S06_5hmC<-getMethylDiff(diff_Meth_S04_vs_S06_5hmC,difference=1,qvalue=0.01,type="all")
+all_diff_S04_vs_S07_5hmC<-getMethylDiff(diff_Meth_S04_vs_S07_5hmC,difference=1,qvalue=0.01,type="all")
+all_diff_S05_vs_S06_5hmC<-getMethylDiff(diff_Meth_S05_vs_S06_5hmC,difference=1,qvalue=0.01,type="all")
+all_diff_S05_vs_S07_5hmC<-getMethylDiff(diff_Meth_S05_vs_S07_5hmC,difference=1,qvalue=0.01,type="all")
+all_diff_S06_vs_S07_5hmC<-getMethylDiff(diff_Meth_S06_vs_S07_5hmC,difference=1,qvalue=0.01,type="all")
+```
+
+
+```{r, eval=F, echo=T}
+# Get genome annotation for CpG islands / genes (refseq)
+
+library("genomation")
+
+# cpg islands
+
+meth_cpgi_BED_file <- system.file("extdata", "MMusculus_mm10_UCSC_cpgi.bed", package = "methylKit")
+meth_cpgi_BED <- readFeatureFlank(meth_cpgi_BED_file, feature.flank.name = c("CpGi", "shores"))
+
+# all_5mC
+
+all_cpgi_S04_vs_S05_5mC <- annotateWithFeatureFlank(as(all_diff_S04_vs_S05_5mC, "GRanges"), 
+          meth_cpgi_BED$CpGi, meth_cpgi_BED$shores, feature.name =  "CpGi", flank.name = "shores")
+all_cpgi_S04_vs_S06_5mC <- annotateWithFeatureFlank(as(all_diff_S04_vs_S06_5mC, "GRanges"), 
+          meth_cpgi_BED$CpGi, meth_cpgi_BED$shores, feature.name =  "CpGi", flank.name = "shores")
+all_cpgi_S04_vs_S07_5mC <- annotateWithFeatureFlank(as(all_diff_S04_vs_S07_5mC, "GRanges"), 
+          meth_cpgi_BED$CpGi, meth_cpgi_BED$shores, feature.name =  "CpGi", flank.name = "shores")
+all_cpgi_S05_vs_S06_5mC <- annotateWithFeatureFlank(as(all_diff_S05_vs_S06_5mC, "GRanges"), 
+          meth_cpgi_BED$CpGi, meth_cpgi_BED$shores, feature.name =  "CpGi", flank.name = "shores")
+all_cpgi_S05_vs_S07_5mC <- annotateWithFeatureFlank(as(all_diff_S05_vs_S07_5mC, "GRanges"), 
+          meth_cpgi_BED$CpGi, meth_cpgi_BED$shores, feature.name =  "CpGi", flank.name = "shores")
+all_cpgi_S06_vs_S07_5mC <- annotateWithFeatureFlank(as(all_diff_S06_vs_S07_5mC, "GRanges"), 
+          meth_cpgi_BED$CpGi, meth_cpgi_BED$shores, feature.name =  "CpGi", flank.name = "shores")
+
+# all_5hmC
+
+all_cpgi_S04_vs_S05_5hmC <- annotateWithFeatureFlank(as(all_diff_S04_vs_S05_5hmC, "GRanges"), 
+          meth_cpgi_BED$CpGi, meth_cpgi_BED$shores, feature.name =  "CpGi", flank.name = "shores")
+all_cpgi_S04_vs_S06_5hmC <- annotateWithFeatureFlank(as(all_diff_S04_vs_S06_5hmC, "GRanges"), 
+          meth_cpgi_BED$CpGi, meth_cpgi_BED$shores, feature.name =  "CpGi", flank.name = "shores")
+all_cpgi_S04_vs_S07_5hmC <- annotateWithFeatureFlank(as(all_diff_S04_vs_S07_5hmC, "GRanges"), 
+          meth_cpgi_BED$CpGi, meth_cpgi_BED$shores, feature.name =  "CpGi", flank.name = "shores")
+all_cpgi_S05_vs_S06_5hmC <- annotateWithFeatureFlank(as(all_diff_S05_vs_S06_5hmC, "GRanges"), 
+          meth_cpgi_BED$CpGi, meth_cpgi_BED$shores, feature.name =  "CpGi", flank.name = "shores")
+all_cpgi_S05_vs_S07_5hmC <- annotateWithFeatureFlank(as(all_diff_S05_vs_S07_5hmC, "GRanges"), 
+          meth_cpgi_BED$CpGi, meth_cpgi_BED$shores, feature.name =  "CpGi", flank.name = "shores")
+all_cpgi_S06_vs_S07_5hmC <- annotateWithFeatureFlank(as(all_diff_S06_vs_S07_5hmC, "GRanges"), 
+          meth_cpgi_BED$CpGi, meth_cpgi_BED$shores, feature.name =  "CpGi", flank.name = "shores")
+
+# genes - refseq
+
+meth_BED_file <- system.file("extdata", "MMusculus_mm10_UCSC_refseq.bed", package = "methylKit")
+meth_BED <- readTranscriptFeatures(meth_BED_file)
+
+# all_5mC
+
+all_anno_S04_vs_S05_5mC <- annotateWithGeneParts(as(all_diff_S04_vs_S05_5mC, "GRanges"), meth_BED)
+all_anno_S04_vs_S06_5mC <- annotateWithGeneParts(as(all_diff_S04_vs_S06_5mC, "GRanges"), meth_BED)
+all_anno_S04_vs_S07_5mC <- annotateWithGeneParts(as(all_diff_S04_vs_S07_5mC, "GRanges"), meth_BED)
+all_anno_S05_vs_S06_5mC <- annotateWithGeneParts(as(all_diff_S05_vs_S06_5mC, "GRanges"), meth_BED)
+all_anno_S05_vs_S07_5mC <- annotateWithGeneParts(as(all_diff_S05_vs_S07_5mC, "GRanges"), meth_BED)
+all_anno_S06_vs_S07_5mC <- annotateWithGeneParts(as(all_diff_S06_vs_S07_5mC, "GRanges"), meth_BED)
+
+# all_5hmC
+
+all_anno_S04_vs_S05_5hmC <- annotateWithGeneParts(as(all_diff_S04_vs_S05_5hmC, "GRanges"), meth_BED)
+all_anno_S04_vs_S06_5hmC <- annotateWithGeneParts(as(all_diff_S04_vs_S06_5hmC, "GRanges"), meth_BED)
+all_anno_S04_vs_S07_5hmC <- annotateWithGeneParts(as(all_diff_S04_vs_S07_5hmC, "GRanges"), meth_BED)
+all_anno_S05_vs_S06_5hmC <- annotateWithGeneParts(as(all_diff_S05_vs_S06_5hmC, "GRanges"), meth_BED)
+all_anno_S05_vs_S07_5hmC <- annotateWithGeneParts(as(all_diff_S05_vs_S07_5hmC, "GRanges"), meth_BED)
+all_anno_S06_vs_S07_5hmC <- annotateWithGeneParts(as(all_diff_S06_vs_S07_5hmC, "GRanges"), meth_BED)
+```
+
+
+```{r, eval=F, echo=T}
+# Annotate CpGs to nearest genes - get gene IDs - Ensembl
+
+library("TxDb.Mmusculus.UCSC.mm10.ensGene")
+
+gene_IDs <- genes(TxDb.Mmusculus.UCSC.mm10.ensGene)
+
+gr_sub_5mC <- makeGRangesFromDataFrame(sub_5mC)
+gr_sub_5hmC <- makeGRangesFromDataFrame(sub_5hmC)
+
+sub_5mC_genes <- gene_IDs[nearest(gr_sub_5mC, gene_IDs)]
+sub_5hmC_genes <- gene_IDs[nearest(gr_sub_5hmC, gene_IDs)]
+
+# save annotation
+
+saveRDS(sub_5mC_genes,"sub_5mC_genes.rds")
+saveRDS(sub_5hmC_genes,"sub_5hmC_genes.rds")
+```
+
+
+```{r, eval=F, echo=T}
+# Get Differentially Methylated Regions (DMRs) from Differentially Methylated Cytosines (DMCs) 
+
+library("edmr")
+library("mixtools")
+library("GenomicRanges")
+library("IRanges")
+
+# 5mC
+
+dmr_all_diff_S04_vs_S05_5mC <- edmr(all_diff_S04_vs_S05_5mC, step=100, dist="none", DMC.qvalue=0.01, 
+                               DMC.methdiff=25, num.DMCs=1, num.CpGs=3, DMR.methdiff=20,plot=FALSE, 
+                               main="", mode=1, ACF=TRUE, fuzzypval=1)
+dmr_all_diff_S04_vs_S06_5mC <- edmr(all_diff_S04_vs_S06_5mC, step=100, dist="none", DMC.qvalue=0.01, 
+                               DMC.methdiff=25, num.DMCs=1, num.CpGs=3, DMR.methdiff=20,plot=FALSE, 
+                               main="", mode=1, ACF=TRUE, fuzzypval=1)
+dmr_all_diff_S04_vs_S07_5mC <- edmr(all_diff_S04_vs_S07_5mC, step=100, dist="none", DMC.qvalue=0.01, 
+                               DMC.methdiff=25, num.DMCs=1, num.CpGs=3, DMR.methdiff=20,plot=FALSE, 
+                               main="", mode=1, ACF=TRUE, fuzzypval=1)
+dmr_all_diff_S05_vs_S06_5mC <- edmr(all_diff_S05_vs_S06_5mC, step=100, dist="none", DMC.qvalue=0.01, 
+                               DMC.methdiff=25, num.DMCs=1, num.CpGs=3, DMR.methdiff=20,plot=FALSE, 
+                               main="", mode=1, ACF=TRUE, fuzzypval=1)
+dmr_all_diff_S05_vs_S07_5mC <- edmr(all_diff_S05_vs_S07_5mC, step=100, dist="none", DMC.qvalue=0.01, 
+                               DMC.methdiff=25, num.DMCs=1, num.CpGs=3, DMR.methdiff=20,plot=FALSE, 
+                               main="", mode=1, ACF=TRUE, fuzzypval=1)
+dmr_all_diff_S06_vs_S07_5mC <- edmr(all_diff_S06_vs_S07_5mC, step=100, dist="none", DMC.qvalue=0.01, 
+                               DMC.methdiff=25, num.DMCs=1, num.CpGs=3, DMR.methdiff=20,plot=FALSE, 
+                               main="", mode=1, ACF=TRUE, fuzzypval=1)
+
+# 5hmC
+
+dmr_all_diff_S04_vs_S05_5hmC <- edmr(all_diff_S04_vs_S05_5hmC, step=100, dist="none", DMC.qvalue=0.01, 
+                               DMC.methdiff=5, num.DMCs=1, num.CpGs=3, DMR.methdiff=5,plot=FALSE, 
+                               main="", mode=1, ACF=TRUE, fuzzypval=1)
+dmr_all_diff_S04_vs_S06_5hmC <- edmr(all_diff_S04_vs_S06_5hmC, step=100, dist="none", DMC.qvalue=0.01, 
+                               DMC.methdiff=5, num.DMCs=1, num.CpGs=3, DMR.methdiff=5,plot=FALSE, 
+                               main="", mode=1, ACF=TRUE, fuzzypval=1)
+dmr_all_diff_S04_vs_S07_5hmC <- edmr(all_diff_S04_vs_S07_5hmC, step=100, dist="none", DMC.qvalue=0.01, 
+                               DMC.methdiff=5, num.DMCs=1, num.CpGs=3, DMR.methdiff=5,plot=FALSE, 
+                               main="", mode=1, ACF=TRUE, fuzzypval=1)
+dmr_all_diff_S05_vs_S06_5hmC <- edmr(all_diff_S05_vs_S06_5hmC, step=100, dist="none", DMC.qvalue=0.01, 
+                               DMC.methdiff=5, num.DMCs=1, num.CpGs=3, DMR.methdiff=5,plot=FALSE, 
+                               main="", mode=1, ACF=TRUE, fuzzypval=1)
+dmr_all_diff_S05_vs_S07_5hmC <- edmr(all_diff_S05_vs_S07_5hmC, step=100, dist="none", DMC.qvalue=0.01, 
+                               DMC.methdiff=5, num.DMCs=1, num.CpGs=3, DMR.methdiff=5,plot=FALSE, 
+                               main="", mode=1, ACF=TRUE, fuzzypval=1)
+dmr_all_diff_S06_vs_S07_5hmC <- edmr(all_diff_S06_vs_S07_5hmC, step=100, dist="none", DMC.qvalue=0.01, 
+                               DMC.methdiff=5, num.DMCs=1, num.CpGs=3, DMR.methdiff=5,plot=FALSE, 
+                               main="", mode=1, ACF=TRUE, fuzzypval=1)
+
+# filter DMRs
+
+filtered_all_diff_S04_vs_S05_5mC <- filter.dmr(dmr_all_diff_S04_vs_S05_5mC)
+filtered_all_diff_S04_vs_S06_5mC <- filter.dmr(dmr_all_diff_S04_vs_S06_5mC)
+filtered_all_diff_S04_vs_S07_5mC <- filter.dmr(dmr_all_diff_S04_vs_S07_5mC)
+filtered_all_diff_S05_vs_S06_5mC <- filter.dmr(dmr_all_diff_S05_vs_S06_5mC)
+filtered_all_diff_S05_vs_S07_5mC <- filter.dmr(dmr_all_diff_S05_vs_S07_5mC)
+filtered_all_diff_S06_vs_S07_5mC <- filter.dmr(dmr_all_diff_S06_vs_S07_5mC)
+
+filtered_all_diff_S04_vs_S05_5hmC <- filter.dmr(dmr_all_diff_S04_vs_S05_5hmC, num.CpGs = 3,
+                                     num.DMCs = 1, mean.meth.diff = 10)
+filtered_all_diff_S04_vs_S06_5hmC <- filter.dmr(dmr_all_diff_S04_vs_S06_5hmC, num.CpGs = 1,
+                                     num.DMCs = 1, mean.meth.diff = 10)
+filtered_all_diff_S04_vs_S07_5hmC <- filter.dmr(dmr_all_diff_S04_vs_S07_5hmC, num.CpGs = 1,
+                                     num.DMCs = 1, mean.meth.diff = 10)
+filtered_all_diff_S05_vs_S06_5hmC <- filter.dmr(dmr_all_diff_S05_vs_S06_5hmC, num.CpGs = 1,
+                                     num.DMCs = 1, mean.meth.diff = 10)
+filtered_all_diff_S05_vs_S07_5hmC <- filter.dmr(dmr_all_diff_S05_vs_S07_5hmC, num.CpGs = 1,
+                                     num.DMCs = 1, mean.meth.diff = 10)
+filtered_all_diff_S06_vs_S07_5hmC <- filter.dmr(dmr_all_diff_S06_vs_S07_5hmC, num.CpGs = 1,
+                                     num.DMCs = 1, mean.meth.diff = 10)
+
+# get hyper and hypo DMRs - 5mC and 5hmC
+
+# 5mC
+
+dmr_hyper_diff_S04_vs_S05_5mC <- get.hyper.dmr(filtered_all_diff_S04_vs_S05_5mC)
+dmr_hyper_diff_S04_vs_S06_5mC <- get.hyper.dmr(filtered_all_diff_S04_vs_S06_5mC)
+dmr_hyper_diff_S04_vs_S07_5mC <- get.hyper.dmr(filtered_all_diff_S04_vs_S07_5mC)
+dmr_hyper_diff_S05_vs_S06_5mC <- get.hyper.dmr(filtered_all_diff_S05_vs_S06_5mC)
+dmr_hyper_diff_S05_vs_S07_5mC <- get.hyper.dmr(filtered_all_diff_S05_vs_S07_5mC)
+dmr_hyper_diff_S06_vs_S07_5mC <- get.hyper.dmr(filtered_all_diff_S06_vs_S07_5mC)
+
+dmr_hypo_diff_S04_vs_S05_5mC <- get.hypo.dmr(filtered_all_diff_S04_vs_S05_5mC)
+dmr_hypo_diff_S04_vs_S06_5mC <- get.hypo.dmr(filtered_all_diff_S04_vs_S06_5mC)
+dmr_hypo_diff_S04_vs_S07_5mC <- get.hypo.dmr(filtered_all_diff_S04_vs_S07_5mC)
+dmr_hypo_diff_S05_vs_S06_5mC <- get.hypo.dmr(filtered_all_diff_S05_vs_S06_5mC)
+dmr_hypo_diff_S05_vs_S07_5mC <- get.hypo.dmr(filtered_all_diff_S05_vs_S07_5mC)
+dmr_hypo_diff_S06_vs_S07_5mC <- get.hypo.dmr(filtered_all_diff_S06_vs_S07_5mC)
+
+# 5hmC
+
+dmr_hyper_diff_S04_vs_S05_5hmC <- get.hyper.dmr(filtered_all_diff_S04_vs_S05_5hmC)
+dmr_hyper_diff_S04_vs_S06_5hmC <- get.hyper.dmr(filtered_all_diff_S04_vs_S06_5hmC)
+dmr_hyper_diff_S04_vs_S07_5hmC <- get.hyper.dmr(filtered_all_diff_S04_vs_S07_5hmC)
+dmr_hyper_diff_S05_vs_S06_5hmC <- get.hyper.dmr(filtered_all_diff_S05_vs_S06_5hmC)
+dmr_hyper_diff_S05_vs_S07_5hmC <- get.hyper.dmr(filtered_all_diff_S05_vs_S07_5hmC)
+dmr_hyper_diff_S06_vs_S07_5hmC <- get.hyper.dmr(filtered_all_diff_S06_vs_S07_5hmC)
+
+dmr_hypo_diff_S04_vs_S05_5hmC <- get.hypo.dmr(filtered_all_diff_S04_vs_S05_5hmC)
+dmr_hypo_diff_S04_vs_S06_5hmC <- get.hypo.dmr(filtered_all_diff_S04_vs_S06_5hmC)
+dmr_hypo_diff_S04_vs_S07_5hmC <- get.hypo.dmr(filtered_all_diff_S04_vs_S07_5hmC)
+dmr_hypo_diff_S05_vs_S06_5hmC <- get.hypo.dmr(filtered_all_diff_S05_vs_S06_5hmC)
+dmr_hypo_diff_S05_vs_S07_5hmC <- get.hypo.dmr(filtered_all_diff_S05_vs_S07_5hmC)
+dmr_hypo_diff_S06_vs_S07_5hmC <- get.hypo.dmr(filtered_all_diff_S06_vs_S07_5hmC)
+```
+
+
+```{r, eval=F, echo=T}
+# Annotate genomic features
+# Select promoters and exons
+
+library("edmr")
+library("mixtools")
+library("GenomicRanges")
+library("IRanges")
+library("rtracklayer")
+library("annotatr")
+library("regioneR")
+library("TxDb.Mmusculus.UCSC.mm10.knownGene")
+library("org.Mm.eg.db")
+
+# Build annotation files
+# basic genes annotation: 1-5kb upstream of TSSs, promoters, 5UTRs, exons, introns, 3UTRs
+# CpGs annotation: CpG islands, shores, shelves, interCGI
+# enhancers annotation: FANTOM5 mm10
+
+annots_features <- c('mm10_basicgenes', 'mm10_cpgs', 'mm10_enhancers_fantom')
+annots_features_gr <- build_annotations(genome = 'mm10', annotations = annots_features)
+
+# annotate features
+
+# 5mC
+
+anno_dmr_hyper_diff_S04_vs_S05_5mC <- annotate_regions(regions = dmr_hyper_diff_S04_vs_S05_5mC, 
+                          annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hyper_diff_S04_vs_S06_5mC <- annotate_regions(regions = dmr_hyper_diff_S04_vs_S06_5mC, 
+                          annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hyper_diff_S04_vs_S07_5mC <- annotate_regions(regions = dmr_hyper_diff_S04_vs_S07_5mC, 
+                          annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hyper_diff_S05_vs_S06_5mC <- annotate_regions(regions = dmr_hyper_diff_S05_vs_S06_5mC, 
+                          annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hyper_diff_S05_vs_S07_5mC <- annotate_regions(regions = dmr_hyper_diff_S05_vs_S07_5mC, 
+                          annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hyper_diff_S06_vs_S07_5mC <- annotate_regions(regions = dmr_hyper_diff_S06_vs_S07_5mC, 
+                          annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+
+anno_dmr_hypo_diff_S04_vs_S05_5mC <- annotate_regions(regions = dmr_hypo_diff_S04_vs_S05_5mC, 
+                          annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hypo_diff_S04_vs_S06_5mC <- annotate_regions(regions = dmr_hypo_diff_S04_vs_S06_5mC, 
+                          annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hypo_diff_S04_vs_S07_5mC <- annotate_regions(regions = dmr_hypo_diff_S04_vs_S07_5mC, 
+                          annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hypo_diff_S05_vs_S06_5mC <- annotate_regions(regions = dmr_hypo_diff_S05_vs_S06_5mC, 
+                          annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hypo_diff_S05_vs_S07_5mC <- annotate_regions(regions = dmr_hypo_diff_S05_vs_S07_5mC, 
+                          annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hypo_diff_S06_vs_S07_5mC <- annotate_regions(regions = dmr_hypo_diff_S06_vs_S07_5mC, 
+                          annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+
+# 5hmC
+
+anno_dmr_hyper_diff_S04_vs_S05_5hmC <- annotate_regions(regions = dmr_hyper_diff_S04_vs_S05_5hmC, 
+                           annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hyper_diff_S04_vs_S06_5hmC <- annotate_regions(regions = dmr_hyper_diff_S04_vs_S06_5hmC, 
+                           annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hyper_diff_S04_vs_S07_5hmC <- annotate_regions(regions = dmr_hyper_diff_S04_vs_S07_5hmC, 
+                           annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hyper_diff_S05_vs_S06_5hmC <- annotate_regions(regions = dmr_hyper_diff_S05_vs_S06_5hmC, 
+                           annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hyper_diff_S05_vs_S07_5hmC <- annotate_regions(regions = dmr_hyper_diff_S05_vs_S07_5hmC, 
+                           annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hyper_diff_S06_vs_S07_5hmC <- annotate_regions(regions = dmr_hyper_diff_S06_vs_S07_5hmC, 
+                           annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+
+anno_dmr_hypo_diff_S04_vs_S05_5hmC <- annotate_regions(regions = dmr_hypo_diff_S04_vs_S05_5hmC, 
+                           annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hypo_diff_S04_vs_S06_5hmC <- annotate_regions(regions = dmr_hypo_diff_S04_vs_S06_5hmC, 
+                           annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hypo_diff_S04_vs_S07_5hmC <- annotate_regions(regions = dmr_hypo_diff_S04_vs_S07_5hmC, 
+                           annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hypo_diff_S05_vs_S06_5hmC <- annotate_regions(regions = dmr_hypo_diff_S05_vs_S06_5hmC, 
+                           annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hypo_diff_S05_vs_S07_5hmC <- annotate_regions(regions = dmr_hypo_diff_S05_vs_S07_5hmC, 
+                           annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+anno_dmr_hypo_diff_S06_vs_S07_5hmC <- annotate_regions(regions = dmr_hypo_diff_S06_vs_S07_5hmC, 
+                           annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+
+# coerce to dataframe
+
+# 5mC
+
+df_anno_dmr_hyper_diff_S04_vs_S05_5mC <- data.frame(anno_dmr_hyper_diff_S04_vs_S05_5mC)
+df_anno_dmr_hyper_diff_S04_vs_S06_5mC <- data.frame(anno_dmr_hyper_diff_S04_vs_S06_5mC)
+df_anno_dmr_hyper_diff_S04_vs_S07_5mC <- data.frame(anno_dmr_hyper_diff_S04_vs_S07_5mC)
+df_anno_dmr_hyper_diff_S05_vs_S06_5mC <- data.frame(anno_dmr_hyper_diff_S05_vs_S06_5mC)
+df_anno_dmr_hyper_diff_S05_vs_S07_5mC <- data.frame(anno_dmr_hyper_diff_S05_vs_S07_5mC)
+df_anno_dmr_hyper_diff_S06_vs_S07_5mC <- data.frame(anno_dmr_hyper_diff_S06_vs_S07_5mC)
+
+df_anno_dmr_hypo_diff_S04_vs_S05_5mC <- data.frame(anno_dmr_hypo_diff_S04_vs_S05_5mC)
+df_anno_dmr_hypo_diff_S04_vs_S06_5mC <- data.frame(anno_dmr_hypo_diff_S04_vs_S06_5mC)
+df_anno_dmr_hypo_diff_S04_vs_S07_5mC <- data.frame(anno_dmr_hypo_diff_S04_vs_S07_5mC)
+df_anno_dmr_hypo_diff_S05_vs_S06_5mC <- data.frame(anno_dmr_hypo_diff_S05_vs_S06_5mC)
+df_anno_dmr_hypo_diff_S05_vs_S07_5mC <- data.frame(anno_dmr_hypo_diff_S05_vs_S07_5mC)
+df_anno_dmr_hypo_diff_S06_vs_S07_5mC <- data.frame(anno_dmr_hypo_diff_S06_vs_S07_5mC)
+
+# 5hmC
+
+df_anno_dmr_hyper_diff_S04_vs_S05_5hmC <- data.frame(anno_dmr_hyper_diff_S04_vs_S05_5hmC)
+df_anno_dmr_hyper_diff_S04_vs_S06_5hmC <- data.frame(anno_dmr_hyper_diff_S04_vs_S06_5hmC)
+df_anno_dmr_hyper_diff_S04_vs_S07_5hmC <- data.frame(anno_dmr_hyper_diff_S04_vs_S07_5hmC)
+df_anno_dmr_hyper_diff_S05_vs_S06_5hmC <- data.frame(anno_dmr_hyper_diff_S05_vs_S06_5hmC)
+df_anno_dmr_hyper_diff_S05_vs_S07_5hmC <- data.frame(anno_dmr_hyper_diff_S05_vs_S07_5hmC)
+df_anno_dmr_hyper_diff_S06_vs_S07_5hmC <- data.frame(anno_dmr_hyper_diff_S06_vs_S07_5hmC)
+
+df_anno_dmr_hypo_diff_S04_vs_S05_5hmC <- data.frame(anno_dmr_hypo_diff_S04_vs_S05_5hmC)
+df_anno_dmr_hypo_diff_S04_vs_S06_5hmC <- data.frame(anno_dmr_hypo_diff_S04_vs_S06_5hmC)
+df_anno_dmr_hypo_diff_S04_vs_S07_5hmC <- data.frame(anno_dmr_hypo_diff_S04_vs_S07_5hmC)
+df_anno_dmr_hypo_diff_S05_vs_S06_5hmC <- data.frame(anno_dmr_hypo_diff_S05_vs_S06_5hmC)
+df_anno_dmr_hypo_diff_S05_vs_S07_5hmC <- data.frame(anno_dmr_hypo_diff_S05_vs_S07_5hmC)
+df_anno_dmr_hypo_diff_S06_vs_S07_5hmC <- data.frame(anno_dmr_hypo_diff_S06_vs_S07_5hmC)
+
+# plot annotated features 
+
+annots_order <- c('mm10_enhancers_fantom','mm10_genes_promoters','mm10_genes_1to5kb',
+                  'mm10_genes_5UTRs','mm10_genes_exons','mm10_genes_introns','mm10_genes_3UTRs',
+                  'mm10_cpg_islands','mm10_cpg_shores','mm10_cpg_shelves','mm10_cpg_inter')
+
+# 5mC
+
+plot_hyper_diff_S04_vs_S05_5mC = plot_annotation(
+  annotated_regions = df_anno_dmr_hyper_diff_S04_vs_S05_5mC, annotation_order = annots_order,
+  plot_title = 'Number os regions annotated per feature - hyper_diff_S04_vs_S05_5mC', 
+  x_label = ' Genomic Features',  y_label = 'Count')
+
+print(plot_hyper_diff_S04_vs_S05_5mC)
+```
+```{r, eval=T, echo=F}
+
+library(edmr)
+library(mixtools)
+library(GenomicRanges)
+library(IRanges)
+library(rtracklayer)
+library(annotatr)
+library(regioneR)
+library("TxDb.Mmusculus.UCSC.mm10.knownGene")
+library("org.Mm.eg.db")
+
+
+diff_Meth_S04_vs_S05_BS <- readRDS("/home/gbl/diff_Meth_S04_vs_S05_BS.rds")
+
+all_diff_S04_vs_S05_5mC <- getMethylDiff(diff_Meth_S04_vs_S05_BS, difference=20,qvalue=0.01,type="all")
+
+dmr_all_diff_S04_vs_S05_5mC <- edmr(all_diff_S04_vs_S05_5mC, step = 100, dist = "none", DMC.qvalue = 0.01, 
+                               DMC.methdiff = 25, num.DMCs = 1, num.CpGs = 3, DMR.methdiff = 20,plot = FALSE, 
+                               main = "", mode = 1, ACF = TRUE, fuzzypval = 1)
+
+filtered_all_diff_S04_vs_S05_5mC <- filter.dmr(dmr_all_diff_S04_vs_S05_5mC)
+
+dmr_hyper_diff_S04_vs_S05_5mC <- get.hyper.dmr(filtered_all_diff_S04_vs_S05_5mC)
+
+annots_features <- c('mm10_basicgenes', 'mm10_cpgs', 'mm10_enhancers_fantom')
+annots_features_gr <- build_annotations(genome = 'mm10', annotations = annots_features)
+
+anno_dmr_hyper_diff_S04_vs_S05_5mC <- annotate_regions(regions = dmr_hyper_diff_S04_vs_S05_5mC, 
+                                      annotations = annots_features_gr, ignore.strand = TRUE, quiet = FALSE)
+
+df_anno_dmr_hyper_diff_S04_vs_S05_5mC <- data.frame(anno_dmr_hyper_diff_S04_vs_S05_5mC)
+
+annots_order <- c('mm10_enhancers_fantom','mm10_genes_promoters','mm10_genes_1to5kb',
+                  'mm10_genes_5UTRs','mm10_genes_exons','mm10_genes_introns','mm10_genes_3UTRs',
+                  'mm10_cpg_islands','mm10_cpg_shores','mm10_cpg_shelves','mm10_cpg_inter')
+
+plot_hyper_diff_S04_vs_S05_5mC = plot_annotation(
+  annotated_regions = df_anno_dmr_hyper_diff_S04_vs_S05_5mC, annotation_order = annots_order,
+  plot_title = 'Number os regions annotated per feature - hyper_diff_S04_vs_S05_5mC', 
+  x_label = ' Genomic Features',  y_label = 'Count')
+
+print(plot_hyper_diff_S04_vs_S05_5mC)
+```
+
+
+```{r, eval=F, echo=T}
+# Build subset A (subsets for promoters and exons)
+
+# 5mC hyper
+
+A_df_anno_dmr_hyper_diff_S04_vs_S05_5mC_prom <- subset(df_anno_dmr_hyper_diff_S04_vs_S05_5mC, 
+                                                       annot.type == "mm10_genes_promoters")
+A_df_anno_dmr_hyper_diff_S04_vs_S05_5mC_exon <- subset(df_anno_dmr_hyper_diff_S04_vs_S05_5mC, 
+                                                       annot.type == "mm10_genes_exons")
+
+A_df_anno_dmr_hyper_diff_S04_vs_S06_5mC_prom <- subset(df_anno_dmr_hyper_diff_S04_vs_S06_5mC, 
+                                                       annot.type == "mm10_genes_promoters")
+A_df_anno_dmr_hyper_diff_S04_vs_S06_5mC_exon <- subset(df_anno_dmr_hyper_diff_S04_vs_S06_5mC, 
+                                                       annot.type == "mm10_genes_exons")
+
+A_df_anno_dmr_hyper_diff_S04_vs_S07_5mC_prom <- subset(df_anno_dmr_hyper_diff_S04_vs_S07_5mC, 
+                                                       annot.type == "mm10_genes_promoters")
+A_df_anno_dmr_hyper_diff_S04_vs_S07_5mC_exon <- subset(df_anno_dmr_hyper_diff_S04_vs_S07_5mC, 
+                                                       annot.type == "mm10_genes_exons")
+
+A_df_anno_dmr_hyper_diff_S05_vs_S06_5mC_prom <- subset(df_anno_dmr_hyper_diff_S05_vs_S06_5mC, 
+                                                       annot.type == "mm10_genes_promoters")
+A_df_anno_dmr_hyper_diff_S05_vs_S06_5mC_exon <- subset(df_anno_dmr_hyper_diff_S05_vs_S06_5mC, 
+                                                       annot.type == "mm10_genes_exons")
+
+A_df_anno_dmr_hyper_diff_S05_vs_S07_5mC_prom <- subset(df_anno_dmr_hyper_diff_S05_vs_S07_5mC, 
+                                                       annot.type == "mm10_genes_promoters")
+A_df_anno_dmr_hyper_diff_S05_vs_S07_5mC_exon <- subset(df_anno_dmr_hyper_diff_S05_vs_S07_5mC, 
+                                                       annot.type == "mm10_genes_exons")
+
+A_df_anno_dmr_hyper_diff_S06_vs_S07_5mC_prom <- subset(df_anno_dmr_hyper_diff_S06_vs_S07_5mC, 
+                                                       annot.type == "mm10_genes_promoters")
+A_df_anno_dmr_hyper_diff_S06_vs_S07_5mC_exon <- subset(df_anno_dmr_hyper_diff_S06_vs_S07_5mC, 
+                                                       annot.type == "mm10_genes_exons")
+
+# The same is applicable for:
+
+# 5mC hypo
+        # prom
+        # exon
+
+# 5hmC hyper
+        # prom
+        # exon
+
+# 5hmC hypo
+        # prom
+        # exon
+```
+
+
+```{r, eval=F, echo=T}
+# Save subsets
+
+saveRDS(A_df_anno_dmr_hyper_diff_S04_vs_S05_5mC_prom,
+        "A_df_anno_dmr_hyper_diff_S04_vs_S05_5mC_prom.rds")
+
+head(A_df_anno_dmr_hypo_diff_S04_vs_S05_5mC_prom)
+```
+```{r, eval=T, echo=F}
+A_df_anno_dmr_hypo_diff_S04_vs_S05_5mC_prom <- readRDS("/home/gbl/A_df_anno_dmr_hyper_diff_S04_vs_S05_5mC_prom.rds")
+
+head(A_df_anno_dmr_hypo_diff_S04_vs_S05_5mC_prom)
+```
+
+
+
+# RNA-Seq analysis (DESeq2)
+
+
+
+```{r, eval=F, echo=T}
+# Install necessary packages
+
+if (!require("BiocManager", quietly = TRUE))
+install.packages("BiocManager")
+
+BiocManager::install("DESeq2")
+BiocManager::install("apeglm")
+BiocManager::install("clusterProfiler")
+BiocManager::install("org.Mm.eg.db")
+BiocManager::install("vsn")
+install.packages('NMF')
+```
+
+```{r, eval=T, echo=T}
+# Load packages 
+
+library("DESeq2")
+library("apeglm")
+library("clusterProfiler")
+library("AnnotationDbi")
+library("org.Mm.eg.db")
+library("vsn")
+library("NMF")
+```
+
+```{r, eval=F, echo=T}
+# Read featureCounts matrix
+
+S01_1 <- as.matrix(read.table ("/path/to/DATA/S01_1_featureCounts.txt", header=T, row.names=1))
+S01_2 <- as.matrix(read.table ("/path/to/DATA/S01_2_featureCounts.txt", header=T, row.names=1))
+S01_3 <- as.matrix(read.table ("/path/to/DATA/S01_3_featureCounts.txt", header=T, row.names=1))
+S02_1 <- as.matrix(read.table ("/path/to/DATA/S02_1_featureCounts.txt", header=T, row.names=1))
+S02_2 <- as.matrix(read.table ("/path/to/DATA/S02_2_featureCounts.txt", header=T, row.names=1))
+S02_3 <- as.matrix(read.table ("/path/tp/DATA/S02_3_featureCounts.txt", header=T, row.names=1))
+S03_1 <- as.matrix(read.table ("/path/to/DATA/S03_1_featureCounts.txt", header=T, row.names=1))
+S03_2 <- as.matrix(read.table ("/path/to/DATA/S03_2_featureCounts.txt", header=T, row.names=1))
+S03_3 <- as.matrix(read.table ("/path/to/DATA/S03_3_featureCounts.txt", header=T, row.names=1))
+S04_1 <- as.matrix(read.table ("/path/to/DATA/S04_1_featureCounts.txt", header=T, row.names=1))
+S04_2 <- as.matrix(read.table ("/path/to/DATA/S04_2_featureCounts.txt", header=T, row.names=1))
+S04_3 <- as.matrix(read.table ("/path/to/DATA/S04_3_featureCounts.txt", header=T, row.names=1))
+```
+
+```{r, eval=T, echo=F}
+S01_1 <- as.matrix(read.table ("/media/gbl/DATA1/00_Scripts_and_Co/Projects/RNA-Seq/FeatureCounts_Modified/Sample_A_1_featureCounts_results_geneid.txt", header = T, row.names = 1))
+S01_2 <- as.matrix(read.table ("/media/gbl/DATA1/00_Scripts_and_Co/Projects/RNA-Seq/FeatureCounts_Modified/Sample_A_2_featureCounts_results_geneid.txt", header = T, row.names = 1))
+S01_3 <- as.matrix(read.table ("/media/gbl/DATA1/00_Scripts_and_Co/Projects/RNA-Seq/FeatureCounts_Modified/Sample_A_3_featureCounts_results_geneid.txt", header = T, row.names = 1))
+S02_1 <- as.matrix(read.table ("/media/gbl/DATA1/00_Scripts_and_Co/Projects/RNA-Seq/FeatureCounts_Modified/Sample_B_1_featureCounts_results_geneid.txt", header = T, row.names = 1))
+S02_2 <- as.matrix(read.table ("/media/gbl/DATA1/00_Scripts_and_Co/Projects/RNA-Seq/FeatureCounts_Modified/Sample_B_2_featureCounts_results_geneid.txt", header = T, row.names = 1))
+S02_3 <- as.matrix(read.table ("/media/gbl/DATA1/00_Scripts_and_Co/Projects/RNA-Seq/FeatureCounts_Modified/Sample_B_3_featureCounts_results_geneid.txt", header = T, row.names = 1))
+S03_1 <- as.matrix(read.table ("/media/gbl/DATA1/00_Scripts_and_Co/Projects/RNA-Seq/FeatureCounts_Modified/Sample_C_1_featureCounts_results_geneid.txt", header = T, row.names = 1))
+S03_2 <- as.matrix(read.table ("/media/gbl/DATA1/00_Scripts_and_Co/Projects/RNA-Seq/FeatureCounts_Modified/Sample_C_2_featureCounts_results_geneid.txt", header = T, row.names = 1))
+S03_3 <- as.matrix(read.table ("/media/gbl/DATA1/00_Scripts_and_Co/Projects/RNA-Seq/FeatureCounts_Modified/Sample_C_3_featureCounts_results_geneid.txt", header = T, row.names = 1))
+S04_1 <- as.matrix(read.table ("/media/gbl/DATA1/00_Scripts_and_Co/Projects/RNA-Seq/FeatureCounts_Modified/Sample_D_1_featureCounts_results_geneid.txt", header = T, row.names = 1))
+S04_2 <- as.matrix(read.table ("/media/gbl/DATA1/00_Scripts_and_Co/Projects/RNA-Seq/FeatureCounts_Modified/Sample_D_2_featureCounts_results_geneid.txt", header = T, row.names = 1))
+S04_3 <- as.matrix(read.table ("/media/gbl/DATA1/00_Scripts_and_Co/Projects/RNA-Seq/FeatureCounts_Modified/Sample_D_3_featureCounts_results_geneid.txt", header = T, row.names = 1))
+```
+
+```{r, eval=T, echo=T}
+# Remove first 5 columns (chr, start, end, strand, length)
+
+
+countdata_S01_1 <- as.matrix(S01_1[,6:ncol(S01_1)], row.names = 1)
+countdata_S01_2 <- as.matrix(S01_2[,6:ncol(S01_2)], row.names = 1)
+countdata_S01_3 <- as.matrix(S01_3[,6:ncol(S01_3)], row.names = 1)
+countdata_S02_1 <- as.matrix(S02_1[,6:ncol(S02_1)], row.names = 1)
+countdata_S02_2 <- as.matrix(S02_2[,6:ncol(S02_2)], row.names = 1)
+countdata_S02_3 <- as.matrix(S02_3[,6:ncol(S02_3)], row.names = 1)
+countdata_S03_1 <- as.matrix(S03_1[,6:ncol(S03_1)], row.names = 1)
+countdata_S03_2 <- as.matrix(S03_2[,6:ncol(S03_2)], row.names = 1)
+countdata_S03_3 <- as.matrix(S03_3[,6:ncol(S03_3)], row.names = 1)
+countdata_S04_1 <- as.matrix(S04_1[,6:ncol(S04_1)], row.names = 1)
+countdata_S04_2 <- as.matrix(S04_2[,6:ncol(S04_2)], row.names = 1)
+countdata_S04_3 <- as.matrix(S04_3[,6:ncol(S04_3)], row.names = 1)
+```
+
+```{r, eval=T, echo=T}
+# Create a single matrix (Removing countdata_S01_1 after PCA analysis)
+
+Countdata <- as.matrix(cbind(countdata_S01_2, countdata_S01_3, countdata_S02_1, countdata_S02_2, 
+                             countdata_S02_3, countdata_S03_1, countdata_S03_2, countdata_S03_3, 
+                             countdata_S04_1, countdata_S04_2, countdata_S04_3), row.names = 1)
+
+# Remove whitespaces and convert matrix to numeric
+
+Countdata <- gsub(" ", "", Countdata)
+mode(Countdata) <- "numeric"
+
+colnames(Countdata) <- c("S01_2","S01_3","S02_1","S02_2", "S02_3", "S03_1", "S03_2", "S03_3", 
+                         "S04_1", "S04_2", "S04_3")
+```
+
+```{r, eval=T, echo=T}
+# Assign condition
+
+condition <- factor(c(rep("S01", 2), rep("S02", 3), rep("S03", 3), rep("S04", 3)))
+```
+
+```{r, eval=T, echo=T}
+# Create a coldata frame and instantiate the DESeqDataSet
+
+coldata <- data.frame(row.names <- colnames(Countdata), condition)
+
+dds <- DESeqDataSetFromMatrix(countData = Countdata, colData = coldata, design = ~condition)
+```
+
+```{r, eval=T, echo=T}
+# Filter and keep rows with at least 10 reads
+
+keep <- rowSums (counts(dds)) >= 10
+
+dds <- dds [keep,]
+```
+
+```{r, eval=T, echo=T}
+# Normalize data and quality assessment
+
+vsd <- vst(dds, blind = FALSE)
+
+sampleDists <- dist(t(assay(vsd)))
+
+plotPCA(vsd, intgroup = c("condition"))
+```
+
+```{r, eval=T, echo=T}
+# Specifying the reference level (S04) and running DESEq 
+
+dds$condition <- relevel(dds$condition, ref = "S04")
+dds_run_S04 <- DESeq(dds)
+```
+
+```{r, eval=T, echo=T}
+# Log fold change shrinkage (visualization and ranking)
+
+resLFC_S01_vs_S04 <- lfcShrink(dds_run_S04, coef = "condition_S01_vs_S04", type = "apeglm")
+resLFC_S02_vs_S04 <- lfcShrink(dds_run_S04, coef = "condition_S02_vs_S04", type = "apeglm")
+resLFC_S03_vs_S04 <- lfcShrink(dds_run_S04, coef = "condition_S03_vs_S04", type = "apeglm")
+```
+
+```{r, eval=F, echo=T}
+# Plot results (alpha and p-adj = 0.05)
+
+plot_S01_vs_S04 <- plotMA(resLFC_S01_vs_S04, alpha = 0.05, main = "DE S04_vs_S01", 
+                          xlab = "mean of normalized counts", ylim = c(-6,6))
+plot_S02_vs_S04 <- plotMA(resLFC_S02_vs_S04, alpha = 0.05, main = "DE S04_vs_S02", 
+                          xlab = "mean of normalized counts", ylim = c(-6,6))
+
+plot_S03_vs_S04 <- plotMA(resLFC_S03_vs_S04, alpha = 0.05, main = "DE S04_vs_S03", 
+                          xlab = "mean of normalized counts", ylim = c(-6,6))
+```
+```{r, eval=T, echo=F}
+plot_S03_vs_S04 <- plotMA(resLFC_S03_vs_S04, alpha = 0.05, main = "DE S04_vs_S03", 
+                          xlab = "mean of normalized counts", ylim = c(-6,6))
+```
+
+```{r, eval=F, echo=T}
+# Get subset of genes (log2 fold change > 1 and padj < 0.05)
+
+sub_resLFC_S01_vs_S04 <- resLFC_S01_vs_S04[!is.na(resLFC_S01_vs_S04$log2FoldChange 
+                         & resLFC_S01_vs_S04$padj)
+                         & (resLFC_S01_vs_S04$log2FoldChange>=1 | resLFC_S01_vs_S04$log2FoldChange<=-1) 
+                         & (resLFC_S01_vs_S04$padj < 0.05),]
+sub_resLFC_S02_vs_S04 <- resLFC_S02_vs_S04[!is.na(resLFC_S02_vs_S04$log2FoldChange 
+                         & resLFC_S02_vs_S04$padj)
+                         & (resLFC_S02_vs_S04$log2FoldChange>=1 | resLFC_S02_vs_S04$log2FoldChange<=-1) 
+                         & (resLFC_S02_vs_S04$padj < 0.05),]
+sub_resLFC_S03_vs_S04 <- resLFC_S03_vs_S04[!is.na(resLFC_S03_vs_S04$log2FoldChange 
+                         & resLFC_S03_vs_S04$padj)
+                         & (resLFC_S03_vs_S04$log2FoldChange>=1 | resLFC_S03_vs_S04$log2FoldChange<=-1) 
+                         & (resLFC_S03_vs_S04$padj < 0.05),]
+```
+
+```{r, eval=F, echo=T}
+# Extract ENS ID and create a single table adding all genes from the 3 comparisons
+
+ENS_ID_S01_vs_S04 <- data.frame(rownames(sub_resLFC_S01_vs_S04))
+colnames(ENS_ID_S01_vs_S04) <- "ENS_ID"
+ENS_ID_S02_vs_S04 <- data.frame(rownames(sub_resLFC_S02_vs_S04))
+colnames(ENS_ID_S02_vs_S04) <- "ENS_ID"
+ENS_ID_S03_vs_S04 <- data.frame(rownames(sub_resLFC_S03_vs_S04))
+colnames(ENS_ID_S03_vs_S04) <- "ENS_ID"
+
+ENS_ID_S04_focused_all <- rbind(ENS_ID_S01_vs_S04, ENS_ID_S02_vs_S04, ENS_ID_S03_vs_S04)
+```
+
+```{r, eval=F, echo=T}
+# Get unique ENS IDs only
+
+ENS_ID_S04_focused_all <- unique(ENS_ID_S04_focused_all)
+```
+
+```{r, eval=F, echo=T}
+# Extract DESeq info from all comparisons based on ENS IDs
+
+resLFC_S01_vs_S04_comp <- cbind("ENS_ID" = rownames(resLFC_S01_vs_S04), resLFC_S01_vs_S04)
+sub_resLFC_S01_vs_S04_comp <- merge(ENS_ID_S04_focused_all, resLFC_S01_vs_S04_comp, by.x = "ENS_ID")
+
+resLFC_S02_vs_S04_comp <- cbind("ENS_ID" = rownames(resLFC_S02_vs_S04), resLFC_S02_vs_S04)
+sub_resLFC_S02_vs_S04_comp <- merge(ENS_ID_S04_focused_all, resLFC_S02_vs_S04_comp, by.x = "ENS_ID")
+
+resLFC_S03_vs_S04_comp <- cbind("ENS_ID" = rownames(resLFC_S03_vs_S04), resLFC_S03_vs_S04)
+sub_resLFC_S03_vs_S04_comp <- merge(ENS_ID_S04_focused_all, resLFC_S03_vs_S04_comp, by.x = "ENS_ID")
+```
+
+```{r, eval=F, echo=T}
+# Reorder subset based on descending padj value
+
+sub_res_S01_vs_S04_comp <- sub_resLFC_S01_vs_S04_comp[order(sub_resLFC_S01_vs_S04_comp$padj),] 
+sub_res_S02_vs_S04_comp <- sub_resLFC_S02_vs_S04_comp[order(sub_resLFC_S02_vs_S04_comp$padj),] 
+sub_res_S03_vs_S04_comp <- sub_resLFC_S03_vs_S04_comp[order(sub_resLFC_S03_vs_S04_comp$padj),] 
+```
+
+```{r, eval=F, echo=T}
+# Get gene symbol from ENS
+
+sub_res_S01_vs_S04_sym_1 <- bitr(gsub("\\.[0-9]*$", "", sub_res_S01_vs_S04_comp$ENS_ID), 
+                            fromType = "ENSEMBL", toType = "sym", OrgDb = org.Mm.eg.db, drop = FALSE)
+sub_res_S01_vs_S04_sym_2 <- sub_res_S01_vs_S04_sym_1[!duplicated(sub_res_S01_vs_S04_sym_1[1]),]
+sub_res_S01_vs_S04_sym_3 <- na.omit(sub_res_S01_vs_S04_sym_2$sym)
+
+sub_res_S01_vs_S04_comp_genes <- sub_res_S01_vs_S04_comp$ENS_ID
+sub_res_S01_vs_S04_comp$ENS_ID <- gsub("\\.[0-9]*$", "", sub_res_S01_vs_S04_comp$ENS_ID)
+sub_res_S01_vs_S04_merged <- merge(sub_res_S01_vs_S04_comp, sub_res_S01_vs_S04_sym_2, 
+                                   by.x = "ENS_ID", by.y = "ENSEMBL")
+
+
+sub_res_S02_vs_S04_sym_1 <- bitr(gsub("\\.[0-9]*$", "", sub_res_S02_vs_S04_comp$ENS_ID), 
+                            fromType = "ENSEMBL", toType = "sym", OrgDb = org.Mm.eg.db, drop = FALSE)
+sub_res_S02_vs_S04_sym_2 <- sub_res_S02_vs_S04_sym_1[!duplicated(sub_res_S02_vs_S04_sym_1[1]),]
+sub_res_S02_vs_S04_sym_3 <- na.omit(sub_res_S02_vs_S04_sym_2$sym)
+
+sub_res_S02_vs_S04_comp_genes <- sub_res_S02_vs_S04_comp$ENS_ID
+sub_res_S02_vs_S04_comp$ENS_ID <- gsub("\\.[0-9]*$", "", sub_res_S02_vs_S04_comp$ENS_ID)
+sub_res_S02_vs_S04_merged <- merge(sub_res_S02_vs_S04_comp, sub_res_S02_vs_S04_sym_2, 
+                                   by.x = "ENS_ID", by.y = "ENSEMBL")
+
+
+sub_res_S03_vs_S04_sym_1 <- bitr(gsub("\\.[0-9]*$", "", sub_res_S03_vs_S04_comp$ENS_ID), 
+                            fromType = "ENSEMBL", toType = "sym", OrgDb = org.Mm.eg.db, drop = FALSE)
+sub_res_S03_vs_S04_sym_2 <- sub_res_S03_vs_S04_sym_1[!duplicated(sub_res_S03_vs_S04_sym_1[1]),]
+sub_res_S03_vs_S04_sym_3 <- na.omit(sub_res_S03_vs_S04_sym_2$sym)
+
+sub_res_S03_vs_S04_comp_genes <- sub_res_S03_vs_S04_comp$ENS_ID
+sub_res_S03_vs_S04_comp$ENS_ID <- gsub("\\.[0-9]*$", "", sub_res_S03_vs_S04_comp$ENS_ID)
+sub_res_S03_vs_S04_merged <- merge(sub_res_S03_vs_S04_comp, sub_res_S03_vs_S04_sym_2, 
+                                   by.x = "ENS_ID", by.y = "ENSEMBL")
+```
+
+```{r, eval=F, echo=T}
+# Build heatmap
+
+# Sort results based on padj
+
+res_S01_vs_S04_sort <- sub_res_S01_vs_S04_merged[order(sub_res_S01_vs_S04_merged$padj),]
+res_S02_vs_S04_sort <- sub_res_S02_vs_S04_merged[order(sub_res_S02_vs_S04_merged$padj),]
+res_S03_vs_S04_sort <- sub_res_S03_vs_S04_merged[order(sub_res_S03_vs_S04_merged$padj),]
+
+# Identify genes with padj < 0.05
+
+res_S01_vs_S04_genes <- rownames(subset(res_S01_vs_S04_sort, padj < 0.05))
+res_S02_vs_S04_genes <- rownames(subset(res_S02_vs_S04_sort, padj < 0.05))
+res_S03_vs_S04_genes <- rownames(subset(res_S03_vs_S04_sort, padj < 0.05))
+
+# Extract normalized read counts for DE genes into a matrix
+
+dds_rlog <- rlog(dds, blind = TRUE)
+rlog_counts <- assay(dds_rlog)
+
+res_S01_vs_S04_counts <- rlog_counts[, c(1:2, 9:11)]
+res_S02_vs_S04_counts <- rlog_counts[, c(3:5, 9:11)]
+res_S03_vs_S04_counts <- rlog_counts[, c(6:8, 9:11)]
+
+# Build matrices
+
+char_sub_resLFC_S01_vs_S04_comp_genes <- as.character(sub_resLFC_S01_vs_S04_comp_genes)
+mat_S01_vs_S04_genes <- na.omit(res_S01_vs_S04_counts[char_sub_resLFC_S01_vs_S04_comp_genes,])
+
+char_sub_resLFC_S02_vs_S04_comp_genes <- as.character(sub_resLFC_S02_vs_S04_comp_genes)
+mat_S02_vs_S04_genes <- na.omit(res_S02_vs_S04_counts[char_sub_resLFC_S02_vs_S04_comp_genes,])
+
+char_sub_resLFC_S03_vs_S04_comp_genes <- as.character(sub_resLFC_S03_vs_S04_comp_genes)
+mat_S03_vs_S04_genes <- na.omit(res_S03_vs_S04_counts[char_sub_resLFC_S03_vs_S04_comp_genes,])
+```
+
+```{r, eval=T, echo=F}
+# Load matrices 
+
+mat_S01_vs_S04_genes <- readRDS("/home/gbl/mat_S01_vs_S04_genes.rds")
+mat_S02_vs_S04_genes <- readRDS("/home/gbl/mat_S02_vs_S04_genes.rds")
+mat_S03_vs_S04_genes <- readRDS("/home/gbl/mat_S03_vs_S04_genes.rds")
+```
+
+```{r, eval=F, echo=T}
+# Plot simple heatmap
+
+aheatmap (mat_S01_vs_S04_genes, Rowv = TRUE, Colv = seq(ncol(mat_S01_vs_S04_genes), 1), 
+          distfun = "euclidean", hclustfun = "average", scale = "row", breaks = 0)
+aheatmap (mat_S02_vs_S04_genes, Rowv = TRUE, Colv = seq(ncol(mat_S02_vs_S04_genes), 1), 
+          distfun = "euclidean", hclustfun = "average", scale = "row", breaks = 0)
+
+aheatmap (mat_S03_vs_S04_genes, Rowv = TRUE, Colv = seq(ncol(mat_S03_vs_S04_genes), 1), 
+          distfun = "euclidean", hclustfun = "average", scale = "row", breaks = 0)
+```
+
+```{r, eval=T, echo=F}
+
+colnames(mat_S03_vs_S04_genes) <- c("S03_1", "S03_2", "S03_3", "S04_1", "S04_2", "S04_3")
+
+aheatmap (mat_S03_vs_S04_genes, Rowv = TRUE, Colv = seq(ncol(mat_S03_vs_S04_genes), 1), 
+          distfun = "euclidean", hclustfun = "average", scale = "row", breaks = 0)
+```
+
+# Correlation analysis of genes found differentially hydroxymethylated, methylated and differentially expressed
+
+```{r, eval=F, echo=T}
+
+# Install necessary packages
+
+BiocManager::install("ComplexHeatmap")
+install.packages("circlize")
+install.packages("tidyverse")
+install.packages("gridBase")
+```
+
+```{r, eval=F, echo=T}
+# Load packages
+
+library("methylKit")
+library("genomation")
+library("GenomicRanges")
+library("tidyr")
+library("ComplexHeatmap")
+library("RColorBrewer")
+library("circlize")
+library("clusterProfiler")
+library("org.Mm.eg.db")
+library("tidyverse")
+```
+
+```{r, eval=F, echo=T}
+# Load Meth and HMEth promoter and exon subsets
+
+# Applicable for: 
+
+# 5mC hyper
+        # prom
+        # exon
+# 5mC hypo
+        # prom
+        # exon
+# 5hmC hyper
+        # prom
+        # exon
+# 5hmC hypo
+        # prom
+        # exon
+
+# Methylome / Hydroxymethylome (S04 / S05 / S06 / S07)
+
+A_df_anno_dmr_hyper_diff_S04_vs_S05_5mC_prom<-readRDS("A_df_anno_dmr_hyper_diff_S04_vs_S05_5mC_prom.rds")
+
+# Methylome (S01 / S02 / S03 / S04) - S04 focused
+
+A_df_anno_dmr_hyper_diff_S04_vs_S01_prom<-readRDS("A_df_anno_dmr_hyper_diff_S04_vs_S01_prom.rds")
+```
+
+```{r, eval=F, echo=T}
+# Get Methylome diffmeth list based on Hydroxymethylome gene list
+# From Hydroxymethylome to Methylome in (S04 / S05 / S06 / S07)
+# From Hydroxymethylome to Methylome in (S01 / S02 / S03 / S04) and RNA_Seq
+
+# Build unique gene list from Hydroxymethylome/Methylome (S04 / S05 / S06 / S07)
+
+# Applicable for: 
+
+# 5hmC hyper
+        # prom
+        # exon
+# 5hmC hypo
+        # prom
+        # exon
+
+uniq_A_df_anno_dmr_hyper_diff_S04_vs_S05_5hmC_prom <- A_df_anno_dmr_hyper_diff_S04_vs_S05_5hmC_prom[!duplicated(A_df_anno_dmr_hyper_diff_S04_vs_S05_5hmC_prom$annot.symbol),]
+
+# Build unique gene list from Methylome in (S04 / S05 / S06 / S07) 
+
+# Applicable for: 
+
+# 5mC hyper
+        # prom
+        # exon
+# 5mC hypo
+        # prom
+        # exon
+
+uniq_A_df_anno_dmr_hyper_diff_S04_vs_S05_5mC_prom <- A_df_anno_dmr_hyper_diff_S04_vs_S05_5mC_prom[!duplicated(A_df_anno_dmr_hyper_diff_S04_vs_S05_5mC_prom$annot.symbol),]
+
+# Build unique gene list from Methylome in (S01 / S02 / S03 / S04) 
+
+# Applicable for: 
+
+# 5mC hyper
+        # prom
+        # exon
+# 5mC hypo
+        # prom
+        # exon
+
+uniq_A_df_anno_dmr_hyper_diff_S04_vs_S01_prom <- A_df_anno_dmr_hyper_diff_S04_vs_S01_prom[!duplicated(A_df_anno_dmr_hyper_diff_S04_vs_S01_prom$annot.symbol),]
+```
+
+```{r, eval=F, echo=T}
+# Merge all lists based on gene symbol 
+# Hydroxymethylome (S04 / S05 / S06 / S07)
+# Methylome (S04 / S05 / S06 / S07)
+# Methylome (S01 / S02 / S03 / S04)
+
+# Hydroxymethylome
+
+# prom
+# 5hmC
+# hyper
+
+sum_hyper_diff_S04_vs_all_5hmC_prom <- merge(uniq_A_df_anno_dmr_hyper_diff_S04_vs_S05_5hmC_prom, 
+                                             uniq_A_df_anno_dmr_hyper_diff_S04_vs_S06_5hmC_prom,  
+                                             by = "annot.symbol", all = TRUE)
+sum_hyper_diff_S04_vs_all_5hmC_prom <- merge(sum_hyper_diff_S04_vs_all_5hmC_prom, 
+                                             uniq_A_df_anno_dmr_hyper_diff_S04_vs_S06_5hmC_prom,  
+                                             by = "annot.symbol", all = TRUE)
+
+# hypo
+
+sum_hypo_diff_S04_vs_all_5hmC_prom <- merge(uniq_A_df_anno_dmr_hypo_diff_S04_vs_S05_5hmC_prom, 
+                                            uniq_A_df_anno_dmr_hypo_diff_S04_vs_S06_5hmC_prom,  
+                                            by = "annot.symbol", all = TRUE)
+sum_hypo_diff_S04_vs_all_5hmC_prom <- merge(sum_hypo_diff_S04_vs_all_5hmC_prom, 
+                                            uniq_A_df_anno_dmr_hypo_diff_S04_vs_S06_5hmC_prom,  
+                                            by = "annot.symbol", all = TRUE)
+
+# exon
+# 5hmC
+# hyper
+
+sum_hyper_diff_S04_vs_all_5hmC_exon <- merge(uniq_A_df_anno_dmr_hyper_diff_S04_vs_S05_5hmC_exon, 
+                                             uniq_A_df_anno_dmr_hyper_diff_S04_vs_S06_5hmC_exon,  
+                                             by = "annot.symbol", all = TRUE)
+sum_hyper_diff_S04_vs_all_5hmC_exon <- merge(sum_hyper_diff_S04_vs_all_5hmC_exon, 
+                                             uniq_A_df_anno_dmr_hyper_diff_S04_vs_S06_5hmC_exon,  
+                                             by = "annot.symbol", all = TRUE)
+
+# hypo
+
+sum_hypo_diff_S04_vs_all_5hmC_exon <- merge(uniq_A_df_anno_dmr_hypo_diff_S04_vs_S05_5hmC_exon, 
+                                            uniq_A_df_anno_dmr_hypo_diff_S04_vs_S06_5hmC_exon,  
+                                            by = "annot.symbol", all = TRUE)
+sum_hypo_diff_S04_vs_all_5hmC_exon <- merge(sum_hypo_diff_S04_vs_all_5hmC_exon, 
+                                            uniq_A_df_anno_dmr_hypo_diff_S04_vs_S06_5hmC_exon,  
+                                            by = "annot.symbol", all = TRUE)
+
+# Methylome (S04 / S05 / S06 / S07)
+
+# prom
+# 5mC
+# hyper
+
+sum_hyper_diff_S04_vs_all_5mC_prom <- merge(uniq_A_df_anno_dmr_hyper_diff_S04_vs_S05_5mC_prom, 
+                                            uniq_A_df_anno_dmr_hyper_diff_S04_vs_S06_5mC_prom,  
+                                            by = "annot.symbol", all = TRUE)
+sum_hyper_diff_S04_vs_all_5mC_prom <- merge(sum_hyper_diff_S04_vs_all_5mC_prom, 
+                                            uniq_A_df_anno_dmr_hyper_diff_S04_vs_S06_5mC_prom,  
+                                            by = "annot.symbol", all = TRUE)
+
+# hypo
+
+sum_hypo_diff_S04_vs_all_5mC_prom <- merge(uniq_A_df_anno_dmr_hypo_diff_S04_vs_S05_5mC_prom, 
+                                           uniq_A_df_anno_dmr_hypo_diff_S04_vs_S06_5mC_prom,  
+                                           by = "annot.symbol", all = TRUE)
+sum_hypo_diff_S04_vs_all_5mC_prom <- merge(sum_hypo_diff_S04_vs_all_5mC_prom, 
+                                           uniq_A_df_anno_dmr_hypo_diff_S04_vs_S06_5mC_prom,  
+                                           by = "annot.symbol", all = TRUE)
+
+# exon
+# 5mC
+# hyper
+
+sum_hyper_diff_S04_vs_all_5mC_exon <- merge(uniq_A_df_anno_dmr_hyper_diff_S04_vs_S05_5mC_exon, 
+                                            uniq_A_df_anno_dmr_hyper_diff_S04_vs_S06_5mC_exon,  
+                                            by = "annot.symbol", all = TRUE)
+sum_hyper_diff_S04_vs_all_5mC_exon <- merge(sum_hyper_diff_S04_vs_all_5mC_exon, 
+                                            uniq_A_df_anno_dmr_hyper_diff_S04_vs_S06_5mC_exon,  
+                                            by = "annot.symbol", all = TRUE)
+
+# hypo
+
+sum_hypo_diff_S04_vs_all_5mC_exon <- merge(uniq_A_df_anno_dmr_hypo_diff_S04_vs_S05_5mC_exon, 
+                                           uniq_A_df_anno_dmr_hypo_diff_S04_vs_S06_5mC_exon,  
+                                           by = "annot.symbol", all = TRUE)
+sum_hypo_diff_S04_vs_all_5mC_exon <- merge(sum_hypo_diff_S04_vs_all_5mC_exon, 
+                                           uniq_A_df_anno_dmr_hypo_diff_S04_vs_S06_5mC_exon,  
+                                           by = "annot.symbol", all = TRUE)
+
+# Methylome (S01 / S02 / S03 / S04)
+
+# prom
+# hyper
+
+sum_hyper_diff_S04_vs_all_met_prom <- merge(uniq_A_df_anno_dmr_hyper_diff_S04_vs_S01_prom, 
+                                            uniq_A_df_anno_dmr_hyper_diff_S04_vs_S02_prom,  
+                                            by = "annot.symbol", all = TRUE)
+sum_hyper_diff_S04_vs_all_met_prom <- merge(sum_hyper_diff_S04_vs_all_met_prom, 
+                                            uniq_A_df_anno_dmr_hyper_diff_S04_vs_S03_prom,  
+                                            by = "annot.symbol", all = TRUE)
+
+# hypo
+
+sum_hypo_diff_S04_vs_all_met_prom <- merge(uniq_A_df_anno_dmr_hypo_diff_S04_vs_S01_prom, 
+                                           uniq_A_df_anno_dmr_hypo_diff_S04_vs_S02_prom,  
+                                           by = "annot.symbol", all = TRUE)
+sum_hypo_diff_S04_vs_all_met_prom <- merge(sum_hypo_diff_S04_vs_all_met_prom, 
+                                           uniq_A_df_anno_dmr_hypo_diff_S04_vs_S03_prom,  
+                                           by = "annot.symbol", all = TRUE)
+
+# exon
+# hyper
+
+sum_hyper_diff_S04_vs_all_met_exon <- merge(uniq_A_df_anno_dmr_hyper_diff_S04_vs_S01_exon,
+                                            uniq_A_df_anno_dmr_hyper_diff_S04_vs_S02_exon,  
+                                            by = "annot.symbol", all = TRUE)
+sum_hyper_diff_S04_vs_all_met_exon <- merge(sum_hyper_diff_S04_vs_all_met_exon, 
+                                            uniq_A_df_anno_dmr_hyper_diff_S04_vs_S03_exon,  
+                                            by = "annot.symbol", all = TRUE)
+
+# hypo
+
+sum_hypo_diff_S04_vs_all_met_exon <- merge(uniq_A_df_anno_dmr_hypo_diff_S04_vs_S01_exon, 
+                                           uniq_A_df_anno_dmr_hypo_diff_S04_vs_S02_exon,  
+                                           by = "annot.symbol", all = TRUE)
+sum_hypo_diff_S04_vs_all_met_exon <- merge(sum_hypo_diff_S04_vs_all_met_exon, 
+                                           uniq_A_df_anno_dmr_hypo_diff_S04_vs_S03_exon,  
+                                           by = "annot.symbol", all = TRUE)
+```
+
+```{r, eval=F, echo=T}
+# Get gene list and coordinates (HMeth / Meth / Met)
+# $symbol / $seq / $start / $end  
+
+# Applicable for:
+
+# 5hmC/5mC
+# prom/exon
+# hyper/hypo
+
+# S04 / S05 / S06 / S07
+
+coal_hyper_diff_S04_vs_all_5hmC_prom <- cbind(sum_hyper_diff_S04_vs_all_5hmC_prom[1], 
+     seq = do.call(pmax, c(sum_hyper_diff_S04_vs_all_5hmC_prom[, c(2,21,40)], na.rm = TRUE)),
+     start = do.call(pmax, c(sum_hyper_diff_S04_vs_all_5hmC_prom[, c(3,22,41)], na.rm = TRUE)),
+     end = do.call(pmax, c(sum_hyper_diff_S04_vs_all_5hmC_prom[, c(4,23,42)], na.rm = TRUE)))
+
+coal_hyper_diff_S04_vs_all_5hmC_prom <- coal_hyper_diff_S04_vs_all_5hmC_prom[-308,]
+
+```
+```{r, eval=T, echo=F}
+coal_hyper_diff_S04_vs_all_5hmC_prom <- readRDS("/home/gbl/coal_hyper_diff_S04_vs_all_5hmC_prom.rds")
+```
+```{r, eval=T, echo=T}
+head(coal_hyper_diff_S04_vs_all_5hmC_prom)
+```
+
+```{r, eval=F, echo=T}
+# Applicable for:
+
+# 5mC
+# prom/exon
+# hyper/hypo
+
+# S01 / S02 / S03 / S04
+
+coal_hyper_diff_S04_vs_all_met_prom <- cbind(sum_hyper_diff_S04_vs_all_met_prom[1], 
+     seq = do.call(pmax, c(sum_hyper_diff_S04_vs_all_met_prom[, c(2,21,40)], na.rm = TRUE)),
+     start = do.call(pmax, c(sum_hyper_diff_S04_vs_all_met_prom[, c(3,22,41)], na.rm = TRUE)),
+     end = do.call(pmax, c(sum_hyper_diff_S04_vs_all_met_prom[, c(4,23,42)], na.rm = TRUE)))
+
+coal_hyper_diff_S04_vs_all_met_prom <- coal_hyper_diff_S04_vs_all_met_prom[-2126,]
+```
+
+```{r, eval=F, echo=T}
+# Get percentage methylation matrix for Hydroxymethylation / Methylation
+# (S04 / S05 / S06 / S07)
+
+# load files
+
+sub_5mC <- readRDS("sub_5mC.rds")
+sub_5hmC <- readRDS("sub_5hmC.rds")
+
+# bin regions based on promoters and exons
+
+refseq_bed <- genomation::readTranscriptFeatures((system.file("extdata", 
+              "MMusculus_mm10_UCSC_refseq.bed", package = "genomation")))
+
+# prom
+
+prom_united_5mC <- regionCounts(sub_5mC, refseq_bed$promoters)
+prom_united_5hmC <- regionCounts(sub_5hmC, refseq_bed$promoters)
+
+# exon
+
+exon_united_5mC <- regionCounts(sub_5mC, refseq_bed$exons)
+exon_united_5hmC <- regionCounts(sub_5hmC, refseq_bed$exons)
+
+# calculate PercMethylation
+
+# prom
+
+prom_perc_Meth_5mC <- percMethylation(prom_united_5mC)
+prom_perc_Meth_5hmC <- percMethylation(prom_united_5hmC)
+
+# exon
+
+exon_perc_Meth_5mC <- percMethylation(exon_united_5mC)
+exon_perc_Meth_5hmC <- percMethylation(exon_united_5hmC)
+
+# add chr / start / end
+
+# prom
+
+prom_perc_Meth_matrix_5mC <- cbind(chr=prom_united_5mC$chr, start=prom_united_5mC$start, 
+                                   end=prom_united_5mC$end, prom_perc_Meth_5mC)
+prom_perc_Meth_matrix_5hmC <- cbind(chr=prom_united_5hmC$chr, start=prom_united_5hmC$start, 
+                                    end=prom_united_5hmC$end, prom_perc_Meth_5hmC)
+
+# exon
+
+exon_perc_Meth_matrix_5mC <- cbind(chr=exon_united_5mC$chr, start=exon_united_5mC$start, 
+                                   end=exon_united_5mC$end, exon_perc_Meth_5mC)
+exon_perc_Meth_matrix_5hmC <- cbind(chr=exon_united_5hmC$chr, start=exon_united_5hmC$start, 
+                                    end=exon_united_5hmC$end, exon_perc_Meth_5hmC)
+
+head(exon_perc_Meth_matrix_5hmC)
+```
+```{r, eval=T, echo=F}
+exon_perc_Meth_matrix_5hmC <- readRDS("/home/gbl/exon_perc_Meth_matrix_5hmC.rds")
+head(exon_perc_Meth_matrix_5hmC)
+```
+
+```{r, eval=F, echo=T}
+# Get percentage methylation matrix for Methylation (S04 focused) 
+# (S01 / S02 / S03 / S04)
+
+# load file
+
+united_met <- readRDS("united_met.rds")
+
+# bin regions based on promoters and exons
+
+prom_united_met <- regionCounts(united_met, refseq_bed$promoters)
+exon_united_met <- regionCounts(united_met, refseq_bed$exons)
+
+# calculate PercMethylation
+
+prom_perc_Meth_met <- percMethylation(prom_united_met)
+exon_perc_Meth_met <- percMethylation(exon_united_met)
+
+# add chr / start / end
+
+prom_perc_Meth_matrix_met <- cbind(chr=prom_united_met$chr, start=prom_united_met$start, 
+                                   end=prom_united_met$end, prom_perc_Meth_met)
+exon_perc_Meth_matrix_met <- cbind(chr=exon_united_met$chr, start=exon_united_met$start, 
+                                   end=exon_united_met$end, exon_perc_Meth_met)
+```
+
+```{r, eval=F, echo=T}
+# Get RNA_Seq counts matrix (S04 focused) 
+# (S01 / S02 / S03 / S04)
+
+# load files 
+
+mat_S01_vs_S04_genes <- as.data.frame(readRDS("mat_S01_vs_S04_genes.rds"))
+mat_S02_vs_S04_genes <- as.data.frame(readRDS("mat_S02_vs_S04_genes.rds"))
+mat_S03_vs_S04_genes <- as.data.frame(readRDS("mat_S03_vs_S04_genes.rds"))
+
+# name first column
+
+mat_S01_vs_S04_genes <- mat_S01_vs_S04_genes %>% rownames_to_column(var = "ENSEMBL")
+mat_S02_vs_S04_genes <- mat_S02_vs_S04_genes %>% rownames_to_column(var = "ENSEMBL")
+mat_S03_vs_S04_genes <- mat_S03_vs_S04_genes %>% rownames_to_column(var = "ENSEMBL")
+
+# merge into one matrix
+
+mat_S01_S02_vs_S04 <- merge(mat_S01_vs_S04_genes, mat_S02_vs_S04_genes, by = "ENSEMBL", all = FALSE)
+mat_all_vs_S04 <- merge(mat_S03_vs_S04_genes, mat_S01_S02_vs_S04, by = "ENSEMBL", all = FALSE)
+
+# include gene symbol name
+
+mat_all_vs_S04_ens <- mat_all_vs_S04[,c("S01_2", "S01_3", "S02_1", "S02_2", "S02_3",
+                                                    "S03_1", "S03_2", "S03_3",
+                                                    "S04_1", "S04_2", "S04_3", "ENSEMBL")] 
+
+mat_all_vs_S04_symbol <- bitr(gsub("\\.[0-9]*$", "", mat_all_vs_S04_ens$ENSEMBL), fromType = "ENSEMBL", 
+                              toType = "SYMBOL", OrgDb = org.Mm.eg.db, drop = FALSE)
+
+mat_all_vs_S04_symbol <- mat_all_vs_S04_symbol[!duplicated(mat_all_vs_S04_symbol$ENSEMBL),]
+
+mat_all_vs_S04_order <- cbind(mat_all_vs_S04_ens, "SYMBOL" = mat_all_vs_S04_symbol$SYMBOL)
+
+# get unique gene matrix
+
+mat_all_vs_S04_uniq <- mat_all_vs_S04_order[!duplicated(mat_all_vs_S04_order$SYMBOL),]
+
+# sort by gene symbol and remove NA
+
+mat_all_vs_S04_sort <- mat_all_vs_S04_uniq[order(mat_all_vs_S04_uniq$SYMBOL),]
+mat_all_vs_S04_sort <- na.omit(mat_all_vs_S04_sort)
+```
+
+```{r, eval=F, echo=T}
+# Build GRanges objects and gene lists
+
+# Applicable for 
+
+# HMEth (S04 / S05 / S06 / S07)
+# Meth (S04 / S05 / S06 / S07)
+# Met (S01 / S02 / S03 / S04)
+
+# Build GRanges object from Hydroxymethylation data 
+
+# 5hmC
+
+# prom
+
+prom_perc_Meth_matrix_5hmC_df <- as.data.frame(prom_perc_Meth_matrix_5hmC)
+prom_perc_Meth_matrix_5hmC_df$chr <- as.character(prom_perc_Meth_matrix_5hmC_df$chr)
+prom_perc_Meth_matrix_5hmC_df$start <- as.numeric(prom_perc_Meth_matrix_5hmC_df$start)
+prom_perc_Meth_matrix_5hmC_df$end <- as.numeric(prom_perc_Meth_matrix_5hmC_df$end)
+
+# exon
+
+exon_perc_Meth_matrix_5hmC_df <- as.data.frame(exon_perc_Meth_matrix_5hmC)
+exon_perc_Meth_matrix_5hmC_df$chr <- as.character(exon_perc_Meth_matrix_5hmC_df$chr)
+exon_perc_Meth_matrix_5hmC_df$start <- as.numeric(exon_perc_Meth_matrix_5hmC_df$start)
+exon_perc_Meth_matrix_5hmC_df$end <- as.numeric(exon_perc_Meth_matrix_5hmC_df$end)
+
+# Create GRanges object
+
+# prom
+
+prom_perc_Meth_matrix_5hmC_gr <- GRanges(seqnames = c(prom_perc_Meth_matrix_5hmC_df$chr),
+                                 ranges = IRanges(start = c(prom_perc_Meth_matrix_5hmC_df$start), 
+                                                  end = c(prom_perc_Meth_matrix_5hmC_df$end)))
+mcols(prom_perc_Meth_matrix_5hmC_gr)=DataFrame(cbind(S04_A=prom_perc_Meth_matrix_5hmC_df$`S04_A`, 
+                                                     S04_B=prom_perc_Meth_matrix_5hmC_df$`S04_B`, 
+                                                     S05_A=prom_perc_Meth_matrix_5hmC_df$`S05_A`, 
+                                                     S05_B=prom_perc_Meth_matrix_5hmC_df$`S05_B`, 
+                                                     S06_A=prom_perc_Meth_matrix_5hmC_df$`S06_A`, 
+                                                     S06_B=prom_perc_Meth_matrix_5hmC_df$`S06_B`,
+                                                     S07_A=prom_perc_Meth_matrix_5hmC_df$`S07_A`, 
+                                                     S07_B=prom_perc_Meth_matrix_5hmC_df$`S07_B`))
+
+# exon
+
+exon_perc_Meth_matrix_5hmC_gr <- GRanges(seqnames = c(exon_perc_Meth_matrix_5hmC_df$chr),
+                                         ranges = IRanges(start = c(exon_perc_Meth_matrix_5hmC_df$start), 
+                                                          end = c(exon_perc_Meth_matrix_5hmC_df$end)))
+mcols(exon_perc_Meth_matrix_5hmC_gr)=DataFrame(cbind(S04_A=exon_perc_Meth_matrix_5hmC_df$`S04_A`, 
+                                                     S04_B=exon_perc_Meth_matrix_5hmC_df$`S04_B`, 
+                                                     S05_A=exon_perc_Meth_matrix_5hmC_df$`S05_A`, 
+                                                     S05_B=exon_perc_Meth_matrix_5hmC_df$`S05_B`, 
+                                                     S06_A=exon_perc_Meth_matrix_5hmC_df$`S06_A`, 
+                                                     S06_B=exon_perc_Meth_matrix_5hmC_df$`S06_B`,
+                                                     S07_A=exon_perc_Meth_matrix_5hmC_df$`S07_A`, 
+                                                     S07_B=exon_perc_Meth_matrix_5hmC_df$`S07_B`))
+
+head(exon_perc_Meth_matrix_5hmC_gr)
+```
+```{r, eval=T, echo=F}
+
+exon_perc_Meth_matrix_5hmC_gr <- readRDS("/home/gbl/exon_perc_Meth_matrix_5hmC_gr.rds")
+
+colnames(exon_perc_Meth_matrix_5hmC_gr@elementMetadata) <- c("S04_A", "S04_B", "S05_A", "S05_B", "S06_A", "S06_B", "S07_A", "S07_B")
+
+head(exon_perc_Meth_matrix_5hmC_gr)
+```
+
+```{r, eval=F, echo=T}
+# Build diff_meth gene lists
+
+# join hyper / hypo lists
+
+# prom
+
+coal_hyper_diff_S04_vs_all_5hmC_prom <- cbind(coal_hyper_diff_S04_vs_all_5hmC_prom, 
+              "type"=rep("hyper", length(nrow(coal_hyper_diff_S04_vs_all_5hmC_prom))))
+coal_hypo_diff_S04_vs_all_5hmC_prom <- cbind(coal_hypo_diff_S04_vs_all_5hmC_prom, 
+              "type"=rep("hypo", length(nrow(coal_hypo_diff_S04_vs_all_5hmC_prom))))
+
+coal_diff_S04_vs_all_5hmC_prom <- rbind(coal_hyper_diff_S04_vs_all_5hmC_prom, 
+                                        coal_hypo_diff_S04_vs_all_5hmC_prom)
+
+coal_diff_S04_vs_all_5hmC_prom <- coal_diff_S04_vs_all_5hmC_prom[-(which(grepl("chrX", 
+                                  coal_diff_S04_vs_all_5hmC_prom$seq))),]
+
+coal_diff_S04_vs_all_5hmC_prom$seq <- gsub("chr", "", coal_diff_S04_vs_all_5hmC_prom$seq)
+
+# exon
+
+coal_hyper_diff_S04_vs_all_5hmC_exon <- cbind(coal_hyper_diff_S04_vs_all_5hmC_exon, 
+                "type"=rep("hyper", length(nrow(coal_hyper_diff_S04_vs_all_5hmC_exon))))
+coal_hypo_diff_S04_vs_all_5hmC_exon <- cbind(coal_hypo_diff_S04_vs_all_5hmC_exon, 
+                "type"=rep("hypo", length(nrow(coal_hypo_diff_S04_vs_all_5hmC_exon))))
+
+coal_diff_S04_vs_all_5hmC_exon <- rbind(coal_hyper_diff_S04_vs_all_5hmC_exon, 
+                                        coal_hypo_diff_S04_vs_all_5hmC_exon)
+
+coal_diff_S04_vs_all_5hmC_exon <- coal_diff_S04_vs_all_5hmC_exon[-(which(grepl("chrX", 
+                                  coal_diff_S04_vs_all_5hmC_exon$seq))),]
+
+coal_diff_S04_vs_all_5hmC_exon$seq <- gsub("chr", "", coal_diff_S04_vs_all_5hmC_exon$seq)
+
+# Create GRanges object
+
+# prom
+
+coal_diff_S04_vs_all_5hmC_prom_gr <- GRanges(seqnames = c(coal_diff_S04_vs_all_5hmC_prom$seq),
+                                     ranges = IRanges(start = c(coal_diff_S04_vs_all_5hmC_prom$start), 
+                                     end = c(coal_diff_S04_vs_all_5hmC_prom$end)))
+
+mcols(coal_diff_S04_vs_all_5hmC_prom_gr) <- DataFrame(cbind(symbol=coal_diff_S04_vs_all_5hmC_prom$annot.symbol, type=coal_diff_S04_vs_all_5hmC_prom$type))
+
+# exon
+
+coal_diff_S04_vs_all_5hmC_exon_gr <- GRanges(seqnames = c(coal_diff_S04_vs_all_5hmC_exon$seq),
+                                     ranges = IRanges(start = c(coal_diff_S04_vs_all_5hmC_exon$start), 
+                                     end = c(coal_diff_S04_vs_all_5hmC_exon$end)))
+
+mcols(coal_diff_S04_vs_all_5hmC_exon_gr) <- DataFrame(cbind(symbol=coal_diff_S04_vs_all_5hmC_exon$annot.symbol, type=coal_diff_S04_vs_all_5hmC_exon$type))
+
+head(coal_diff_S04_vs_all_5hmC_exon_gr)
+```
+```{r, eval=T, echo=F}
+
+coal_diff_S04_vs_all_5hmC_exon_gr <- readRDS("/home/gbl/coal_diff_S04_vs_all_5hmC_exon_gr.rds")
+
+head(coal_diff_S04_vs_all_5hmC_exon_gr)
+```
+
+```{r, eval=F, echo=T}
+# Get the peaks that overlap between diff_meth and perc_meth  
+
+# Applicable in:
+# Hydroxyemehtylation / Methylation in (S04 / S05  /S06 / S07) 
+# Methylation in (S01 / S02 / S03 / S04)
+
+
+# 5hmC
+
+# Subset overlaps between GRanges
+
+# prom
+
+hits_perc_diff_5hmC_prom <- findOverlaps(prom_perc_Meth_matrix_5hmC_gr, 
+                                         coal_diff_S04_vs_all_5hmC_prom_gr)
+over_perc_diff_5hmC_prom <- subsetByOverlaps(prom_perc_Meth_matrix_5hmC_gr, 
+                                             coal_diff_S04_vs_all_5hmC_prom_gr)
+
+# exon
+
+hits_perc_diff_5hmC_exon <- findOverlaps(exon_perc_Meth_matrix_5hmC_gr, 
+                                         coal_diff_S04_vs_all_5hmC_exon_gr)
+over_perc_diff_5hmC_exon <- subsetByOverlaps(exon_perc_Meth_matrix_5hmC_gr, 
+                                             coal_diff_S04_vs_all_5hmC_exon_gr)
+
+# Get ranges plus complete metadata (perc_Meth and gene symbol / ENSEMBL)
+
+# prom
+
+symbol_5hmC_prom <- CharacterList(split(coal_diff_S04_vs_all_5hmC_prom_gr$symbol[subjectHits(hits_perc_diff_5hmC_prom)], queryHits(hits_perc_diff_5hmC_prom)))
+
+type_5hmC_prom <- CharacterList(split(coal_diff_S04_vs_all_5hmC_prom_gr$type[subjectHits(hits_perc_diff_5hmC_prom)], queryHits(hits_perc_diff_5hmC_prom)))
+
+mcols(over_perc_diff_5hmC_prom) <- DataFrame(mcols(over_perc_diff_5hmC_prom), 
+                                             symbol_5hmC_prom, type_5hmC_prom)
+
+# exon
+
+symbol_5hmC_exon <- CharacterList(split(coal_diff_S04_vs_all_5hmC_exon_gr$symbol[subjectHits(hits_perc_diff_5hmC_exon)], queryHits(hits_perc_diff_5hmC_exon)))
+
+type_5hmC_exon <- CharacterList(split(coal_diff_S04_vs_all_5hmC_exon_gr$type[subjectHits(hits_perc_diff_5hmC_exon)], queryHits(hits_perc_diff_5hmC_exon)))
+
+mcols(over_perc_diff_5hmC_exon) <- DataFrame(mcols(over_perc_diff_5hmC_exon), 
+                                             symbol_5hmC_exon, type_5hmC_exon)
+
+# Get unique list of gene symbol with respective ranges and perc methylation values
+
+# prom
+
+ranges_5hmC_prom <- as.data.frame(over_perc_diff_5hmC_prom)
+
+uniq_ranges_5hmC_prom <- ranges_5hmC_prom[!duplicated(ranges_5hmC_prom$symbol_5hmC_prom),]
+
+uniq_ranges_5hmC_prom_un <- as.data.frame(unnest(uniq_ranges_5hmC_prom, symbol_5hmC_prom))
+
+# exon
+
+ranges_5hmC_exon <- as.data.frame(over_perc_diff_5hmC_exon)
+
+uniq_ranges_5hmC_exon <- ranges_5hmC_exon[!duplicated(ranges_5hmC_exon$symbol_5hmC_exon),]
+
+uniq_ranges_5hmC_exon_un <- as.data.frame(unnest(uniq_ranges_5hmC_exon, symbol_5hmC_exon))
+
+# Get gene list
+
+# prom 
+
+gene_list_5hmC_prom <- (data.frame(uniq_ranges_5hmC_prom_un$symbol_5hmC_prom))
+gene_list_5hmC_prom <- sort(gene_list_5hmC_prom$uniq_ranges_5hmC_prom_un.symbol_5hmC_prom)
+
+# exon 
+
+gene_list_5hmC_exon <- (data.frame(uniq_ranges_5hmC_exon_un$symbol_5hmC_exon))
+gene_list_5hmC_exon <- sort(gene_list_5hmC_exon$uniq_ranges_5hmC_exon_un.symbol_5hmC_exon)
+```
+
+```{r, eval=F, echo=T}
+# Get the peaks that overlap between HMeth and Meth (S04 / S05 / S06 / S07)  
+
+# by symbol
+
+# prom
+
+merge_5hmC_5mC_prom <- merge(uniq_ranges_5hmC_prom_un, uniq_ranges_5mC_prom_un, 
+                             by.x = "symbol_5hmC_prom", by.y = "symbol_5mC_prom", all = FALSE  )
+merge_5hmC_5mC_prom_un <- merge_5hmC_5mC_prom[!duplicated(merge_5hmC_5mC_prom$symbol_5hmC_prom),]
+
+# exon
+
+merge_5hmC_5mC_exon <- merge(uniq_ranges_5hmC_exon_un, uniq_ranges_5mC_exon_un, 
+                             by.x = "symbol_5hmC_exon", by.y = "symbol_5mC_exon", all = FALSE  )
+merge_5hmC_5mC_exon_un <- merge_5hmC_5mC_exon[!duplicated(merge_5hmC_5mC_exon$symbol_5hmC_exon),]
+```
+
+```{r, eval=F, echo=T}
+# Get the peaks that overlap between HMeth, Meth and Met 
+# (S04 / S05 / S06 / S07  //  S01 / S02 / S03 / S04)
+
+# by symbol
+
+# prom
+
+merge_5hmC_5mC_met_prom <- merge(merge_5hmC_5mC_prom, uniq_ranges_met_prom_un, 
+                                 by.x = "symbol_5hmC_prom", by.y = "symbol_met_prom", all = FALSE  )
+merge_5hmC_5mC_met_prom_un <- merge_5hmC_5mC_met_prom[!duplicated(merge_5hmC_5mC_met_prom$symbol_5hmC_prom),]
+
+# exon
+
+merge_5hmC_5mC_met_exon <- merge(merge_5hmC_5mC_exon, uniq_ranges_met_exon_un, 
+                                 by.x = "symbol_5hmC_exon", by.y = "symbol_met_exon", all = FALSE  )
+merge_5hmC_5mC_met_exon_un <- merge_5hmC_5mC_met_exon[!duplicated(merge_5hmC_5mC_met_exon$symbol_5hmC_exon),]
+```
+
+```{r, eval=F, echo=T}
+# Get the peaks that overlap between HMeth, Meth, Met and RNA_Seq
+# (S04 / S05 / S06 / S07   //   S01 / S02 / S03 / S04)
+
+# by symbol
+
+# prom
+
+merge_5hmC_5mC_met_RNA_prom <- merge(merge_5hmC_5mC_met_prom, mat_all_vs_S04_sort, 
+                                     by.x = "symbol_5hmC_prom", by.y = "SYMBOL", all = FALSE  )
+merge_5hmC_5mC_met_RNA_prom_un <- merge_5hmC_5mC_met_RNA_prom[!duplicated(merge_5hmC_5mC_met_RNA_prom$symbol_5hmC_prom),]
+
+# exon
+
+merge_5hmC_5mC_met_RNA_exon <- merge(merge_5hmC_5mC_met_exon, mat_all_vs_S04_sort, 
+                                     by.x = "symbol_5hmC_exon", by.y = "SYMBOL", all = FALSE  )
+merge_5hmC_5mC_met_RNA_exon_un <- merge_5hmC_5mC_met_RNA_exon[!duplicated(merge_5hmC_5mC_met_RNA_exon$symbol_5hmC_exon),]
+
+head(merge_5hmC_5mC_met_RNA_exon_un)
+```
+```{r, eval=T, echo=F}
+
+merge_5hmC_5mC_met_RNA_exon_un <- readRDS("/home/gbl/merge_5hmC_5mC_met_RNA_exon_un.rds")
+
+colnames(merge_5hmC_5mC_met_RNA_exon_un) <- c("symbol_5hmC_exon", "seqnames.x", "start.x", "end.x", "width.x", "strand.x","S04_A.x", "S04_B.x", 
+                      "S05_A.x","S05_B.x", "S06_A.x", "S06_B.x", "S07_A.x", "S07_B.x", "type_5hmC_exon", "seqnames.y", "start.y",
+                      "end.y", "width.y", "strand.y", "S04_A.y", "S04_B.y", "S05_A.y", "S05_B.y", "S06_A.y","S06_B.y",
+                      "S07_A.y", "S07_B.y", "type_5mC_exon", "seqnames", "start", "end", "width", "strand", "S01_1", "S01_2.x",
+                      "S01_3.x", "S02_1", "S02_2", "S02_3", "S03_1", "S03_2", "S03_3", "S04_1", "S04_2", "S04_3", "type_met_exon", 
+                      "S01_2.y", "S01_3.y", "S02_1", "S02_2", "S02_3", "S03_1", "S03_2", "S03_3", "S04_1", "S04_2", "S04_3", "ENSEMBL")
+
+head(merge_5hmC_5mC_met_RNA_exon_un)
+```
+
+```{r, eval=F, echo=T}
+# Build Heatmap-ready matrices 
+
+# Heatmap 1: 
+# HMeth vs Meth (S04 / S05 / S06 / S07) 
+
+# 5hmC
+
+# prom 
+
+mat_5hmC_prom_1 <- cbind(merge_5hmC_5mC_prom_un[c(7,8,9,10,11,12,13,14)])
+scaled_mat_5hmC_prom_1 <- t(scale(t(mat_5hmC_prom_1)))
+rownames(scaled_mat_5hmC_prom_1) <- merge_5hmC_5mC_prom_un[,1]
+
+type_mat_5hmC_prom_1 <- as.data.frame(unnest(merge_5hmC_5mC_prom_un, type_5hmC_prom))
+type_mat_5hmC_prom_1 <- type_mat_5hmC_prom_1[!duplicated(type_mat_5hmC_prom_1$symbol_5hmC_prom),]
+type_mat_5hmC_prom_1 <- as.data.frame(type_mat_5hmC_prom_1$type_5hmC_prom)
+names(type_mat_5hmC_prom_1) <- "type"
+type_mat_5hmC_prom_1$type <-  ifelse(type_mat_5hmC_prom_1$type =="1", "hyper", "hypo") 
+
+# exon
+
+mat_5hmC_exon_1 <- cbind(merge_5hmC_5mC_exon_un[c(7,8,9,10,11,12,13,14)])
+scaled_mat_5hmC_exon_1 <- t(scale(t(mat_5hmC_exon_1)))
+rownames(scaled_mat_5hmC_exon_1) <- merge_5hmC_5mC_exon_un[,1]
+
+type_mat_5hmC_exon_1 <- as.data.frame(unnest(merge_5hmC_5mC_exon_un, type_5hmC_exon))
+type_mat_5hmC_exon_1 <- type_mat_5hmC_exon_1[!duplicated(type_mat_5hmC_exon_1$symbol_5hmC_exon),]
+type_mat_5hmC_exon_1 <- as.data.frame(type_mat_5hmC_exon_1$type_5hmC_exon)
+names(type_mat_5hmC_exon_1) <- "type"
+type_mat_5hmC_exon_1$type <-  ifelse(type_mat_5hmC_exon_1$type =="1", "hyper", "hypo") 
+
+# 5mC
+
+# prom 
+
+mat_5mC_prom_1 <- cbind(merge_5hmC_5mC_prom_un[c(21,22,23,24,25,26,27,28)])
+scaled_mat_5mC_prom_1 <- t(scale(t(mat_5mC_prom_1)))
+rownames(scaled_mat_5mC_prom_1) <- merge_5hmC_5mC_prom_un[,1]
+
+type_mat_5mC_prom_1 <- as.data.frame(unnest(merge_5hmC_5mC_prom_un, type_5mC_prom))
+type_mat_5mC_prom_1 <- type_mat_5mC_prom_1[!duplicated(type_mat_5mC_prom_1$symbol_5hmC_prom),]
+type_mat_5mC_prom_1 <- as.data.frame(type_mat_5mC_prom_1$type_5mC_prom)
+names(type_mat_5mC_prom_1) <- "type"
+type_mat_5mC_prom_1$type <-  ifelse(type_mat_5mC_prom_1$type =="1", "hyper", "hypo") 
+
+# exon
+
+mat_5mC_exon_1 <- cbind(merge_5hmC_5mC_exon_un[c(21,22,23,24,25,26,27,28)])
+scaled_mat_5mC_exon_1 <- t(scale(t(mat_5mC_exon_1)))
+rownames(scaled_mat_5mC_exon_1) <- merge_5hmC_5mC_exon_un[,1]
+
+type_mat_5mC_exon_1 <- as.data.frame(unnest(merge_5hmC_5mC_exon_un, type_5mC_exon))
+type_mat_5mC_exon_1 <- type_mat_5mC_exon_1[!duplicated(type_mat_5mC_exon_1$symbol_5hmC_exon),]
+type_mat_5mC_exon_1 <- as.data.frame(type_mat_5mC_exon_1$type_5mC_exon)
+names(type_mat_5mC_exon_1) <- "type"
+type_mat_5mC_exon_1$type <- ifelse(type_mat_5mC_exon_1$type =="1", "hyper", "hypo") 
+```
+
+```{r, eval=F, echo=T}
+# Heatmap 2:   
+# HMeth vs Meth (S04 / S05 / S06 / S07) vs Meth (S01 / S02 / S03 / S04)  
+
+# 5hmC
+
+# prom 
+
+mat_5hmC_prom_2 <- cbind(merge_5hmC_5mC_met_prom_un[c(7,8,9,10,11,12,13,14)])
+scaled_mat_5hmC_prom_2 <- t(scale(t(mat_5hmC_prom_2)))
+rownames(scaled_mat_5hmC_prom_2) <- merge_5hmC_5mC_met_prom_un[,1]
+
+type_mat_5hmC_prom_2 <- as.data.frame(unnest(merge_5hmC_5mC_met_prom_un, type_5hmC_prom))
+type_mat_5hmC_prom_2 <- type_mat_5hmC_prom_2[!duplicated(type_mat_5hmC_prom_2$symbol_5hmC_prom),]
+type_mat_5hmC_prom_2 <- as.data.frame(type_mat_5hmC_prom_2$type_5hmC_prom)
+names(type_mat_5hmC_prom_2) <- "type"
+type_mat_5hmC_prom_2$type <- ifelse(type_mat_5hmC_prom_2$type =="1", "hyper", "hypo") 
+
+# exon
+
+mat_5hmC_exon_2 <- cbind(merge_5hmC_5mC_met_exon_un[c(7,8,9,10,11,12,13,14)])
+scaled_mat_5hmC_exon_2 <- t(scale(t(mat_5hmC_exon_2)))
+rownames(scaled_mat_5hmC_exon_2) <- merge_5hmC_5mC_met_exon_un[,1]
+
+type_mat_5hmC_exon_2 <- as.data.frame(unnest(merge_5hmC_5mC_met_exon_un, type_5hmC_exon))
+type_mat_5hmC_exon_2 <- type_mat_5hmC_exon_2[!duplicated(type_mat_5hmC_exon_2$symbol_5hmC_exon),]
+type_mat_5hmC_exon_2 <- as.data.frame(type_mat_5hmC_exon_2$type_5hmC_exon)
+names(type_mat_5hmC_exon_2) <- "type"
+type_mat_5hmC_exon_2$type <- ifelse(type_mat_5hmC_exon_2$type =="1", "hyper", "hypo") 
+
+# 5mC
+
+# prom 
+
+mat_5mC_prom_2 <- cbind(merge_5hmC_5mC_met_prom_un[c(21,22,23,24,25,26,27,28)])
+scaled_mat_5mC_prom_2 <- t(scale(t(mat_5mC_prom_2)))
+rownames(scaled_mat_5mC_prom_2) <- merge_5hmC_5mC_met_prom_un[,1]
+
+type_mat_5mC_prom_2 <- as.data.frame(unnest(merge_5hmC_5mC_met_prom_un, type_5mC_prom))
+type_mat_5mC_prom_2 <- type_mat_5mC_prom_2[!duplicated(type_mat_5mC_prom_2$symbol_5hmC_prom),]
+type_mat_5mC_prom_2 <- as.data.frame(type_mat_5mC_prom_2$type_5mC_prom)
+names(type_mat_5mC_prom_2) <- "type"
+type_mat_5mC_prom_2$type <- ifelse(type_mat_5mC_prom_2$type =="1", "hyper", "hypo") 
+
+# exon
+
+mat_5mC_exon_2 <- cbind(merge_5hmC_5mC_met_exon_un[c(21,22,23,24,25,26,27,28)])
+scaled_mat_5mC_exon_2 <- t(scale(t(mat_5mC_exon_2)))
+rownames(scaled_mat_5mC_exon_2) <- merge_5hmC_5mC_met_exon_un[,1]
+
+type_mat_5mC_exon_2 <- as.data.frame(unnest(merge_5hmC_5mC_met_exon_un, type_5mC_exon))
+type_mat_5mC_exon_2 <- type_mat_5mC_exon_2[!duplicated(type_mat_5mC_exon_2$symbol_5hmC_exon),]
+type_mat_5mC_exon_2 <- as.data.frame(type_mat_5mC_exon_2$type_5mC_exon)
+names(type_mat_5mC_exon_2) <- "type"
+type_mat_5mC_exon_2$type <- ifelse(type_mat_5mC_exon_2$type =="1", "hyper", "hypo") 
+
+# met
+
+# prom 
+
+mat_met_prom_2 <- cbind(merge_5hmC_5mC_met_prom_un[c(35,36,37,38,39,40,41,42,43,44,45,46)])
+scaled_mat_met_prom_2 <- t(scale(t(mat_met_prom_2)))
+rownames(scaled_mat_met_prom_2) <- merge_5hmC_5mC_met_prom_un[,1]
+
+type_mat_met_prom_2 <- as.data.frame(unnest(merge_5hmC_5mC_met_prom_un, type_met_prom))
+type_mat_met_prom_2 <- type_mat_met_prom_2[!duplicated(type_mat_met_prom_2$symbol_5hmC_prom),]
+type_mat_met_prom_2 <- as.data.frame(type_mat_met_prom_2$type_met_prom)
+names(type_mat_met_prom_2) <- "type"
+type_mat_met_prom_2$type <- ifelse(type_mat_met_prom_2$type =="1", "hyper", "hypo") 
+
+# exon
+
+mat_met_exon_2 <- cbind(merge_5hmC_5mC_met_exon_un[c(35,36,37,38,39,40,41,42,43,44,45,46)])
+scaled_mat_met_exon_2 <- t(scale(t(mat_met_exon_2)))
+rownames(scaled_mat_met_exon_2) <- merge_5hmC_5mC_met_exon_un[,1]
+
+type_mat_met_exon_2 <- as.data.frame(unnest(merge_5hmC_5mC_met_exon_un, type_met_exon))
+type_mat_met_exon_2 <- type_mat_met_exon_2[!duplicated(type_mat_met_exon_2$symbol_5hmC_exon),]
+type_mat_met_exon_2 <- as.data.frame(type_mat_met_exon_2$type_met_exon)
+names(type_mat_met_exon_2) <- "type"
+type_mat_met_exon_2$type <- ifelse(type_mat_met_exon_2$type =="1", "hyper", "hypo") 
+```
+
+```{r, eval=F, echo=T}
+# Heatmap 3:   
+# HMeth vs Meth (S04 / S05/ S06 / S07) vs Meth (S01 / S02 / S03 / S04) / RNA_Seq (S01 / S02 / S03 / S04)
+
+# 5hmC
+
+# prom 
+
+mat_5hmC_prom_3 <- cbind(merge_5hmC_5mC_met_RNA_prom_un[c(7,8,9,10,11,12,13,14)])
+scaled_mat_5hmC_prom_3 <- t(scale(t(mat_5hmC_prom_3)))
+rownames(scaled_mat_5hmC_prom_3) <- merge_5hmC_5mC_met_RNA_prom_un[,1]
+
+type_mat_5hmC_prom_3 <- as.data.frame(unnest(merge_5hmC_5mC_met_RNA_prom_un, type_5hmC_prom))
+type_mat_5hmC_prom_3 <- type_mat_5hmC_prom_3[!duplicated(type_mat_5hmC_prom_3$symbol_5hmC_prom),]
+type_mat_5hmC_prom_3 <- as.data.frame(type_mat_5hmC_prom_3$type_5hmC_prom)
+names(type_mat_5hmC_prom_3) <- "type"
+type_mat_5hmC_prom_3$type <- ifelse(type_mat_5hmC_prom_3$type =="1", "hyper", "hypo") 
+
+# exon
+
+mat_5hmC_exon_3 <- cbind(merge_5hmC_5mC_met_RNA_exon_un[c(7,8,9,10,11,12,13,14)])
+scaled_mat_5hmC_exon_3 <- t(scale(t(mat_5hmC_exon_3)))
+rownames(scaled_mat_5hmC_exon_3) <- merge_5hmC_5mC_met_RNA_exon_un[,1]
+
+type_mat_5hmC_exon_3 <- as.data.frame(unnest(merge_5hmC_5mC_met_RNA_exon_un, type_5hmC_exon))
+type_mat_5hmC_exon_3 <- type_mat_5hmC_exon_3[!duplicated(type_mat_5hmC_exon_3$symbol_5hmC_exon),]
+type_mat_5hmC_exon_3 <- as.data.frame(type_mat_5hmC_exon_3$type_5hmC_exon)
+names(type_mat_5hmC_exon_3) <- "type"
+type_mat_5hmC_exon_3$type <- ifelse(type_mat_5hmC_exon_3$type =="1", "hyper", "hypo") 
+
+# 5mC
+
+# prom 
+
+mat_5mC_prom_3 <- cbind(merge_5hmC_5mC_met_RNA_prom_un[c(21,22,23,24,25,26,27,28)])
+scaled_mat_5mC_prom_3 <- t(scale(t(mat_5mC_prom_3)))
+rownames(scaled_mat_5mC_prom_3) <- merge_5hmC_5mC_met_RNA_prom_un[,1]
+
+type_mat_5mC_prom_3 <- as.data.frame(unnest(merge_5hmC_5mC_met_RNA_prom_un, type_5mC_prom))
+type_mat_5mC_prom_3 <- type_mat_5mC_prom_3[!duplicated(type_mat_5mC_prom_3$symbol_5hmC_prom),]
+type_mat_5mC_prom_3 <- as.data.frame(type_mat_5mC_prom_3$type_5mC_prom)
+names(type_mat_5mC_prom_3) <- "type"
+type_mat_5mC_prom_3$type <- ifelse(type_mat_5mC_prom_3$type =="1", "hyper", "hypo") 
+
+# exon
+
+mat_5mC_exon_3 <- cbind(merge_5hmC_5mC_met_RNA_exon_un[c(21,22,23,24,25,26,27,28)])
+scaled_mat_5mC_exon_3 <- t(scale(t(mat_5mC_exon_3)))
+rownames(scaled_mat_5mC_exon_3) <- merge_5hmC_5mC_met_RNA_exon_un[,1]
+
+type_mat_5mC_exon_3 <- as.data.frame(unnest(merge_5hmC_5mC_met_RNA_exon_un, type_5mC_exon))
+type_mat_5mC_exon_3 <- type_mat_5mC_exon_3[!duplicated(type_mat_5mC_exon_3$symbol_5hmC_exon),]
+type_mat_5mC_exon_3 <- as.data.frame(type_mat_5mC_exon_3$type_5mC_exon)
+names(type_mat_5mC_exon_3) <- "type"
+type_mat_5mC_exon_3$type <- ifelse(type_mat_5mC_exon_3$type =="1", "hyper", "hypo") 
+
+# met
+
+# prom 
+
+mat_met_prom_3 <- cbind(merge_5hmC_5mC_met_RNA_prom_un[c(35,36,37,38,39,40,41,42,43,44,45,46)])
+scaled_mat_met_prom_3 <- t(scale(t(mat_met_prom_3)))
+rownames(scaled_mat_met_prom_3) <- merge_5hmC_5mC_met_RNA_prom_un[,1]
+
+type_mat_met_prom_3 <- as.data.frame(unnest(merge_5hmC_5mC_met_RNA_prom_un, type_met_prom))
+type_mat_met_prom_3 <- type_mat_met_prom_3[!duplicated(type_mat_met_prom_3$symbol_5hmC_prom),]
+type_mat_met_prom_3 <- as.data.frame(type_mat_met_prom_3$type_met_prom)
+names(type_mat_met_prom_3) <- "type"
+type_mat_met_prom_3$type <- ifelse(type_mat_met_prom_3$type =="1", "hyper", "hypo") 
+
+# exon
+
+mat_met_exon_3 <- cbind(merge_5hmC_5mC_met_RNA_exon_un[c(35,36,37,38,39,40,41,42,43,44,45,46)])
+scaled_mat_met_exon_3 <- t(scale(t(mat_met_exon_3)))
+rownames(scaled_mat_met_exon_3) <- merge_5hmC_5mC_met_RNA_exon_un[,1]
+
+type_mat_met_exon_3 <- as.data.frame(unnest(merge_5hmC_5mC_met_RNA_exon_un, type_met_exon))
+type_mat_met_exon_3 <- type_mat_met_exon_3[!duplicated(type_mat_met_exon_3$symbol_5hmC_exon),]
+type_mat_met_exon_3 <- as.data.frame(type_mat_met_exon_3$type_met_exon)
+names(type_mat_met_exon_3) <- "type"
+type_mat_met_exon_3$type <- ifelse(type_mat_met_exon_3$type =="1", "hyper", "hypo") 
+
+# RNA_Seq
+
+# prom 
+
+mat_RNA_prom_3 <- cbind(merge_5hmC_5mC_met_RNA_prom_un[c(48,49,50,51,52,53,54,55,56,57,58)])
+scaled_mat_RNA_prom_3 <- t(scale(t(mat_RNA_prom_3)))
+rownames(scaled_mat_RNA_prom_3) <- merge_5hmC_5mC_met_RNA_prom_un[,1]
+
+# exon 
+
+mat_RNA_exon_3 <- cbind(merge_5hmC_5mC_met_RNA_exon_un[c(48,49,50,51,52,53,54,55,56,57,58)])
+scaled_mat_RNA_exon_3 <- t(scale(t(mat_RNA_exon_3)))
+rownames(scaled_mat_RNA_exon_3) <- merge_5hmC_5mC_met_RNA_exon_un[,1]
+```
+
+```{r, eval=T, echo=F}
+
+library("methylKit")
+library("genomation")
+library("GenomicRanges")
+library("tidyr")
+library("ComplexHeatmap")
+library("RColorBrewer")
+library("circlize")
+library("clusterProfiler")
+library("org.Mm.eg.db")
+library("tidyverse")
+
+scaled_mat_5hmC_prom_1 <- readRDS("/home/gbl/scaled_mat_5hmC_prom_1.rds")
+scaled_mat_5mC_prom_1 <- readRDS("/home/gbl/scaled_mat_5mC_prom_1.rds")
+
+scaled_mat_5hmC_prom_2 <- readRDS("/home/gbl/scaled_mat_5hmC_prom_2.rds")
+scaled_mat_5mC_prom_2 <- readRDS("/home/gbl/scaled_mat_5mC_prom_2.rds")
+scaled_mat_met_prom_2 <- readRDS("/home/gbl/scaled_mat_met_prom_2.rds")
+
+scaled_mat_5hmC_prom_3 <- readRDS("/home/gbl/scaled_mat_5hmC_prom_3.rds")
+scaled_mat_5mC_prom_3 <- readRDS("/home/gbl/scaled_mat_5mC_prom_3.rds")
+scaled_mat_met_prom_3 <- readRDS("/home/gbl/scaled_mat_met_prom_3.rds")
+scaled_mat_RNA_prom_3 <- readRDS("/home/gbl/scaled_mat_RNA_prom_3.rds")
+
+
+colnames(scaled_mat_5hmC_prom_1) <- c("S04_A", "S04_B", "S05_A", "S05_B", "S06_A", "S06_B", "S07_A", "S07_B")
+colnames(scaled_mat_5hmC_prom_2) <- c("S04_A", "S04_B", "S05_A", "S05_B", "S06_A", "S06_B", "S07_A", "S07_B")
+colnames(scaled_mat_5hmC_prom_3) <- c("S04_A", "S04_B", "S05_A", "S05_B", "S06_A", "S06_B", "S07_A", "S07_B")
+
+colnames(scaled_mat_5mC_prom_1) <- c("S04_A", "S04_B", "S05_A", "S05_B", "S06_A", "S06_B", "S07_A", "S07_B")
+colnames(scaled_mat_5mC_prom_2) <- c("S04_A", "S04_B", "S05_A", "S05_B", "S06_A", "S06_B", "S07_A", "S07_B")
+colnames(scaled_mat_5mC_prom_3) <- c("S04_A", "S04_B", "S05_A", "S05_B", "S06_A", "S06_B", "S07_A", "S07_B")
+
+colnames(scaled_mat_met_prom_2) <- c("S01_1", "S01_2", "S01_3", "S02_1", "S02_2", "S02_3", "S03_1", "S03_2", "S03_3", "S04_1", "S04_2", "S04_3")
+colnames(scaled_mat_met_prom_3) <- c("S01_1", "S01_2", "S01_3", "S02_1", "S02_2", "S02_3", "S03_1", "S03_2", "S03_3", "S04_1", "S04_2", "S04_3")
+
+colnames(scaled_mat_RNA_prom_3) <- c("S01_2", "S01_3", "S02_1", "S02_2", "S02_3", "S03_1", "S03_2", "S03_3", "S04_1", "S04_2", "S04_3")
+
+
+type_mat_5hmC_prom_1 <- readRDS("/home/gbl/type_mat_5hmC_prom_1.rds")
+type_mat_5hmC_prom_2 <- readRDS("/home/gbl/type_mat_5hmC_prom_2.rds")
+type_mat_5hmC_prom_3 <- readRDS("/home/gbl/type_mat_5hmC_prom_3.rds")
+
+
+```
+
+```{r, eval=T, echo=T}
+# Build heatmaps
+
+# Heatmap 1: 
+# HMeth vs Meth (S04 / S05 / S06 / S07) 
+
+# prom 
+
+# Clustering and adjusting column order
+
+column_tree_1 <- hclust(dist(t(scaled_mat_5hmC_prom_1)))
+column_order_5hmC_1 <- c(1,2,3,4,5,6,7,8)
+column_order_5mC_1 <- c(1,2,3,4,5,6,7,8)
+type_1 <- as.matrix(type_mat_5hmC_prom_1)
+
+# Heatmap colors
+
+meth_col_fun_1 <- colorRamp2(c(-2, 0, 2), c("blue", "black", "yellow"))
+type_col_1 <- c("hyper" = "yellow", "hypo" = "blue")
+
+# Define two column annotations
+
+ht_opt(legend_title_gp = gpar(fontsize = 8, fontface = "bold"), legend_labels_gp = gpar(fontsize = 8),
+       heatmap_column_names_gp = gpar(fontsize = 8), heatmap_column_title_gp = gpar(fontsize = 10),
+       heatmap_row_names_gp = gpar(fontsize = 4), heatmap_row_title_gp = gpar(fontsize = 8))
+
+# Clustered by Hydroxymethylation (S04 / S05 / S06 / S07)
+
+ht_list_1 <- Heatmap(scaled_mat_5hmC_prom_1, name = "5hmC", col = meth_col_fun_1, 
+                     column_order = column_order_5hmC_1, column_title = "5hmC") +
+  Heatmap(scaled_mat_5mC_prom_1, name = "5mC", col = meth_col_fun_1, 
+          column_order = column_order_5mC_1, column_title = "5mC")
+
+draw(ht_list_1, row_km = 2, 
+     column_title = "Hydroxymethylation and methylation in promoters", 
+     column_title_gp = gpar(fontsize = 12, fontface = "bold"), merge_legends = TRUE, heatmap_legend_side = "bottom")
+
+```
+
+```{r, eval=T, echo=T}
+# Heatmap 2: 
+# HMeth vs Meth (S04 / S05 / S06 / S07) vs Meth (S01 / S02 / S03 / S04)  
+
+# prom 
+
+# Clustering and adjusting column order
+
+column_tree_2 <- hclust(dist(t(scaled_mat_5hmC_prom_2)))
+column_order_5hmC_2 <- c(1,2,3,4,5,6,7,8)
+column_order_5mC_2 <- c(1,2,3,4,5,6,7,8)
+column_order_met_2 <- c(10,11,12,7,8,9,4,5,6,1,2,3)
+type_2 <- as.matrix(type_mat_5hmC_prom_2)
+
+# Heatmap colors
+
+meth_col_fun_2 <- colorRamp2(c(-2, 0, 2), c("blue", "black", "yellow"))
+type_col_2 <- c("hyper" = "yellow", "hypo" = "blue")
+
+# Define two column annotations
+
+ht_opt(legend_title_gp = gpar(fontsize = 8, fontface = "bold"), legend_labels_gp = gpar(fontsize = 8),
+       heatmap_column_names_gp = gpar(fontsize = 6), heatmap_column_title_gp = gpar(fontsize = 10),
+       heatmap_row_names_gp = gpar(fontsize = 4)  ,heatmap_row_title_gp = gpar(fontsize = 8))
+
+# Clustered by Hydroxymethylation (S04 / S05 / S06 / S07)
+
+ht_list_2 <- Heatmap(scaled_mat_5hmC_prom_2, name = "5hmC", col = meth_col_fun_2, 
+                     column_order = column_order_5hmC_2, column_title = "5hmC") +
+  Heatmap(scaled_mat_5mC_prom_2, name = "5mC", col = meth_col_fun_2, 
+          column_order = column_order_5mC_2, column_title = "5mC") +
+  Heatmap(scaled_mat_met_prom_2, name = "5mC + 5hmC", col = meth_col_fun_2, 
+          column_order = column_order_met_2, column_title = "5mC + 5hmC") 
+
+draw(ht_list_2, row_km = 2, 
+     column_title = "Hydroxymethylation and methylation in promoters", 
+     column_title_gp = gpar(fontsize = 12, fontface = "bold"), merge_legends = TRUE, 
+     heatmap_legend_side = "bottom")
+
+
+```
+
+```{r, eval=T, echo=T}
+# Heatmap 3: 
+# HMeth vs Meth (S04 / S05 / S06 / S07) vs Meth (S01 / S02 / S03 / S04) / RNA_Seq (S01 / S02 / S03 / S04)
+
+# prom 
+
+# Clustering and adjusting column order
+
+column_tree_3 <- hclust(dist(t(scaled_mat_5hmC_prom_2)))
+column_order_5hmC_3 <- c(1,2,3,4,5,6,7,8)
+column_order_5mC_3 <- c(1,2,3,4,5,6,7,8)
+column_order_met_3 <- c(10,11,12,7,8,9,4,5,6,1,2,3)
+column_order_RNA_3 <- c(9,10,11,6,7,8,3,4,5,1,2)
+type_3 <- as.matrix(type_mat_5hmC_prom_3)
+
+# Heatmap colors
+
+meth_col_fun_3 <- colorRamp2(c(-2, 0, 2), c("blue", "black", "yellow"))
+expr_col_fun_3 <- colorRamp2(c(-2,0,2), c("green", "black", "red"))
+type_col_3 <- c("hyper" = "yellow", "hypo" = "blue")
+
+# Define two column annotations
+
+ht_opt(legend_title_gp = gpar(fontsize = 8, fontface = "bold"), legend_labels_gp = gpar(fontsize = 8),
+       heatmap_column_names_gp = gpar(fontsize = 8), heatmap_column_title_gp = gpar(fontsize = 10),
+       heatmap_row_names_gp = gpar(fontsize = 4), heatmap_row_title_gp = gpar(fontsize = 8))
+
+# Clustering by Hydroxymethylation (S04 / S05 / S06 / S07)
+
+ht_list_3 <- Heatmap(scaled_mat_5hmC_prom_3, name = "5hmC", col = meth_col_fun_3, 
+                     column_order = column_order_5hmC_3, column_title = "5hmC") +
+  Heatmap(scaled_mat_5mC_prom_3, name = "5mC", col = meth_col_fun_3, 
+          column_order = column_order_5mC_3, column_title = "5mC") +
+  Heatmap(scaled_mat_met_prom_3, name = "5mC + 5hmC", col = meth_col_fun_3, 
+          column_order = column_order_met_3, column_title = "5mC + 5hmC") +
+  Heatmap(scaled_mat_RNA_prom_3, name = "Gene expression", col = expr_col_fun_3, 
+          column_order = column_order_RNA_3, column_title = "Gene expression") 
+
+draw(ht_list_3, row_km = 2, 
+     column_title = ("Hydroxymethylation, methylation and gene expression in promoters"), 
+     column_title_gp = gpar(fontsize = 12, fontface = "bold"), merge_legends = TRUE, 
+     heatmap_legend_side = "bottom")
+```
+
+# GO enrichment 
+
+```{r, eval=T, echo=T}
+# GO enrichment 
+# Gene list from RNA_Seq vs met (S01 / S02 / S03 / S04) vs Meth vs HMeth (S04 / S05 / S06 / S07)
+
+library(clusterProfiler)
+library(org.Mm.eg.db)
+
+# Load gene list
+
+gene_list_RNA_met_Meth_HMeth_exon=readRDS("/home/gbl/gene_list_RNA_met_Meth_HMeth_exon.rds")
+
+# Get list of genes from dataframe - SYMBOL to ENTREZID
+
+gene_list_RNA_met_Meth_HMeth_exon_entrez = bitr(gene_list_RNA_met_Meth_HMeth_exon, 
+                                           fromType = "SYMBOL", toType = "ENTREZID", 
+                                           OrgDb = org.Mm.eg.db)
+gene_list_RNA_met_Meth_HMeth_exon = gene_list_RNA_met_Meth_HMeth_exon_entrez$ENTREZID
+
+# GO enrichment
+
+compGO_gene_list_RNA_met_Meth_HMeth_exon = enrichGO(gene = gene_list_RNA_met_Meth_HMeth_exon, 
+                                                    ont = "ALL", OrgDb = 'org.Mm.eg.db', 
+                                                    pvalueCutoff = 0.05, qvalueCutoff = 0.05, 
+                                                    pAdjustMethod = "BH")
+
+# Plot
+
+dotplot(compGO_gene_list_RNA_met_Meth_HMeth_exon, 
+        showCategory = 15,  title = "GO enrichment analysis - exons") 
+```
+
+```{r, eval=T, echo=T}
+
+sessionInfo()
+```
